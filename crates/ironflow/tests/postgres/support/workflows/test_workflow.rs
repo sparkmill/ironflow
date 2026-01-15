@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 
 pub struct TestWorkflow;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub enum TestWorkflowStatus {
     #[default]
     Idle,
