@@ -12,8 +12,8 @@ This project publishes two crates to crates.io: `ironflow` (the runtime) and `ir
    reflected in the README and release notes.
 4. **Install tooling (if needed).** Run `./scripts/sqlx_install.sh` for SQLx CLI and confirm
    `pg_format` is available for SQL checks.
-5. **Prepare SQLx metadata.** Run `cargo sqlx prepare --workspace --all-features` so `.sqlx/`
-   metadata is refreshed and can be published for offline builds.
+5. **Prepare SQLx metadata.** Run `./scripts/sqlx_prepare.sh` so `crates/ironflow/.sqlx/` is refreshed
+   and can be published for offline builds.
 6. **Run the full verification suite.** `./scripts/verify.sh` runs formatters, typechecks,
    clippy, security checks, and tests in one shot.
 7. **Check packaging (order matters).** Run `cargo package -p ironflow-macros` first. After the

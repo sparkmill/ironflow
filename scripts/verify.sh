@@ -23,8 +23,8 @@ step "Checking TOML formatting"
 step "Checking Markdown formatting"
 "${SCRIPT_DIR}/format-md.sh" --check
 
-step "Preparing SQLx metadata"
-cargo sqlx prepare --workspace --check
+step "Checking SQLx metadata"
+"${SCRIPT_DIR}/sqlx_prepare.sh" --check
 
 step "Running typecheck"
 cargo check --workspace --all-targets --all-features

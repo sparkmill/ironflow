@@ -97,6 +97,10 @@ jobs:
         run: ./scripts/sqlx_migrate.sh
         shell: bash
 
+      - name: Check SQLx metadata
+        run: ./scripts/sqlx_prepare.sh --check
+        shell: bash
+
       - name: Typecheck
         run: cargo check --workspace --all-targets --all-features
 
