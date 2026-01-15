@@ -2,6 +2,15 @@
 members = ["crates/ironflow", "crates/ironflow-macros", "crates/test-utils"]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Nikita Moshenskiy <nikita@moshensky>"]
+repository = "https://github.com/sparkmill/ironflow"
+homepage = "https://github.com/sparkmill/ironflow"
+rust-version = "1.89"
+
 [profile.dev]
 debug = "line-tables-only"
 # NB: Before attaching a debugger this has to be uncommented
@@ -16,6 +25,9 @@ debug = false      # No debug info in production
 panic = "abort"    # Faster panics, smaller binary, immediate container restart in K8s
 
 [workspace.dependencies]
+# Local crates
+ironflow-macros = { version = "0.1.0", path = "crates/ironflow-macros" }
+test-utils = { version = "0.1.0", path = "crates/test-utils" }
 # Async runtime
 tokio = { version = "1", default-features = false, features = [
   "macros",

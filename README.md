@@ -4,6 +4,8 @@
 
 Rust workflow runtime that keeps inputs deterministic, timers reliable, and effects idempotent so you can orchestrate recurring jobs, polling, or automation with minimal overhead. Ironflow packages both the runtime crate (`ironflow`) and the helper macros (`ironflow-macros`), and exposes detailed architecture and usage guidance under [`crates/ironflow/docs/README.md`](crates/ironflow/docs/README.md).
 
+> NB: Ironflow is in active development and testing. Expect breaking changes, bugs, and potential concurrency or data issues in the current release and between releases; use in production only with caution.
+
 ## What is Ironflow?
 
 Ironflow implements an event-sourced workflow engine with an async effect outbox, timers, and input observation tracking. The `ironflow` crate provides the core runtime plus Postgres-backed persistence, while `ironflow-macros` ships derive helpers such as `HasWorkflowId` so downstream crates can keep input handling concise. Refer to `crates/ironflow/docs/README.md` for a guided tour of the architecture, core workflow model, and practical how-tos.

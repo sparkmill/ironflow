@@ -4,6 +4,8 @@
 It exposes the core workflow state machine, Postgres-backed persistence, outbox processing,
 and timers, and it integrates with the `ironflow-macros` helpers such as `HasWorkflowId`.
 
+> NB: Ironflow is in active development and testing. Expect breaking changes, bugs, and potential concurrency or data issues in the current release and between releases; use in production only with caution.
+
 ## Highlights
 
 - Event sourcing with SQLx-backed persistence for workflows, timers, outbox, and projections.
