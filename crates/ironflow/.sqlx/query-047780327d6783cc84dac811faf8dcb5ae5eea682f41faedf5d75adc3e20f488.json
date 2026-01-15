@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE ironflow.workflow_instances\n                   SET event_count = event_count + $3,\n                       last_event_at = now(),\n                       completed_at = now()\n                   WHERE workflow_type = $1 AND workflow_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "047780327d6783cc84dac811faf8dcb5ae5eea682f41faedf5d75adc3e20f488"
+}

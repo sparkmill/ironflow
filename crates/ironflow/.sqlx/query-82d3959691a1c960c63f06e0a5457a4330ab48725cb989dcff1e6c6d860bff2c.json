@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE ironflow.projection_positions\n            SET last_sequence = $2,\n                updated_at = now()\n            WHERE projection_name = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "82d3959691a1c960c63f06e0a5457a4330ab48725cb989dcff1e6c6d860bff2c"
+}

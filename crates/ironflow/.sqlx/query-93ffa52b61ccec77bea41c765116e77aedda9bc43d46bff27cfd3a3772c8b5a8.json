@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT global_sequence, workflow_type, workflow_id, sequence, payload, created_at\n            FROM ironflow.events\n            WHERE global_sequence > $1\n            ORDER BY global_sequence\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "global_sequence",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "workflow_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "workflow_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "sequence",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "93ffa52b61ccec77bea41c765116e77aedda9bc43d46bff27cfd3a3772c8b5a8"
+}

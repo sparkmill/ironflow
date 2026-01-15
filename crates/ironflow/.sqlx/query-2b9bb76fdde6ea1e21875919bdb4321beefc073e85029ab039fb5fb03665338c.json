@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE ironflow.timers\n            SET attempts = attempts + 1,\n                last_error = $2,\n                locked_until = now() + ($3 * interval '1 second'),\n                locked_by = NULL\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2b9bb76fdde6ea1e21875919bdb4321beefc073e85029ab039fb5fb03665338c"
+}

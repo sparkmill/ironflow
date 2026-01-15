@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE ironflow.timers\n            SET processed_at = now(),\n                locked_until = NULL,\n                locked_by = NULL\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a1377f553634128747d325c59269c910784c2749ebbb4121eb8bc404cd020cb8"
+}

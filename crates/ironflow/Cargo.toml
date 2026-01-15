@@ -1,0 +1,52 @@
+[package]
+name = "ironflow"
+version = "0.1.2"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Event-sourced workflow engine for durable, long-running processes"
+readme = "README.md"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/ironflow"
+keywords = ["workflow", "event-sourcing", "postgres", "sqlx", "async"]
+rust-version.workspace = true
+include = [
+  "Cargo.toml",
+  "README.md",
+  "LICENSE",
+  "src/**",
+  "migrations/**",
+  "examples/**",
+  "tests/**",
+  ".sqlx/**",
+]
+
+[package.metadata.docs.rs]
+features = ["postgres"]
+
+[features]
+default = ["postgres"]
+postgres = ["dep:sqlx"]
+
+[dependencies]
+async-trait = { workspace = true }
+ironflow-macros = { workspace = true }
+nonempty = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+# Optional
+sqlx = { workspace = true, optional = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+url = { workspace = true }

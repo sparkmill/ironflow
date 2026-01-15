@@ -1,0 +1,174 @@
+[workspace]
+members = ["crates/ironflow", "crates/ironflow-macros"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Nikita Moshenskiy <nikita@moshensky>"]
+repository = "https://github.com/sparkmill/ironflow"
+homepage = "https://github.com/sparkmill/ironflow"
+rust-version = "1.89"
+
+[profile.dev]
+debug = "line-tables-only"
+# NB: Before attaching a debugger this has to be uncommented
+# debug = true
+
+[profile.release]
+opt-level = "s"    # Optimize for size with good performance balance
+lto = "thin"       # Thin LTO - much faster than full LTO, still good optimization
+codegen-units = 16 # Parallel compilation for faster builds
+strip = true       # Strip symbols to reduce binary size
+debug = false      # No debug info in production
+panic = "abort"    # Faster panics, smaller binary, immediate container restart in K8s
+
+[workspace.dependencies]
+# Local crates
+ironflow-macros = { version = "0.1.0", path = "crates/ironflow-macros" }
+# Async runtime
+tokio = { version = "1", default-features = false, features = [
+  "macros",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
+async-trait = "0.1"
+tokio-util = "0.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.12", features = ["cookie", "typed-header"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = [
+  "cors",
+  "trace",
+  "compression-gzip",
+] }
+tower-sessions = { version = "0.14", features = ["signed"] }
+tower-sessions-sqlx-store = { version = "0.15.0", features = ["postgres"] }
+
+# OpenAPI documentation
+utoipa = { version = "5", features = ["axum_extras", "uuid", "time"] }
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
+# Data
+# NB! Keep in sync with the one in `./scripts/sqlx_install.sh`
+sqlx = { version = "0.8", features = [
+  "runtime-tokio",
+  "tls-rustls-aws-lc-rs",
+  "postgres",
+  "derive",
+  "macros",
+  "migrate",
+  "uuid",
+  "time",
+  "json",
+] }
+dashmap = "6.1.0"
+secrecy = { version = "0.10", features = ["serde"] }
+url = "2.5"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+nonempty = { version = "0.12.0", features = ["std", "serialize"] }
+derive_more = { version = "2", features = ["from", "display", "into"] }
+strum = { version = "0.27", features = ["derive"] }
+zeroize = "1.8"
+
+# Date and time
+time = { version = "=0.3.44", features = [
+  "serde",
+  "serde-human-readable",
+  "macros",
+  "formatting",
+  "parsing",
+] }
+humantime = "2.3"
+
+# Numeric types
+rust_decimal = { version = "1.39", features = [
+  "serde-float",
+  "serde-with-str",
+  "macros",
+] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Testing utils
+assert_matches = "1.5"
+pretty_assertions = "1.4"
+wiremock = "0.6"
+
+# AWS sdk
+aws-config = "1.8"
+aws-credential-types = "1.2"
+aws-sdk-eventbridge = { version = "1.98", default-features = false, features = [
+  "rt-tokio",
+  "default-https-client",
+] }
+aws-sdk-sqs = { version = "1.91", default-features = false, features = [
+  "rt-tokio",
+  "default-https-client",
+] }
+aws-sdk-cloudformation = { version = "1.104", default-features = false, features = [
+  "rt-tokio",
+  "default-https-client",
+] }
+aws-sdk-kms = { version = "1.97", default-features = false, features = [
+  "rt-tokio",
+  "default-https-client",
+] }
+aws-sdk-sts = { version = "1.95", default-features = false, features = [
+  "rt-tokio",
+  "default-https-client",
+] }
+
+# Configuration
+config = "0.15"
+dotenvy = "0.15"
+
+# Validation
+validator = { version = "0.20", features = ["derive"] }
+
+# Encryption
+aes-gcm = "0.10"
+rand = "0.9"
+base64 = "0.22"
+ciborium = "0.2"
+sha2 = "0.10"
+
+# Other
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls",
+  "cookies",
+  "form",
+  "query",
+] }
+rustc_version_runtime = "0.3"
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
+argon2 = "0.5"
+clap = { version = "4.5", features = ["derive"] }
+csv = "1.4"
+governor = "0.10"
+odbc-api = "20"
+
+# Build tools
+cargo_metadata = "0.23"
+petgraph = "0.8"
+
+[profile.dev.package.sqlx-macros]
+opt-level = 3
