@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT global_sequence, workflow_type, workflow_id, sequence, payload, created_at\n            FROM ironflow.events\n            WHERE workflow_type = $1 AND workflow_id = $2\n            ORDER BY sequence ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "global_sequence",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "workflow_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "workflow_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "sequence",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "dbcc3359a6b63e5f7d7f74a399617c9c336c911084dcc9b553d21239956e947d"
+}
