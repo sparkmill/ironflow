@@ -1,0 +1,8 @@
+# Rust toolchain configuration
+# This file ensures everyone uses the same Rust version
+# See: https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file
+
+[toolchain]
+channel = "1.89.0"
+# The default profile includes: rustc, cargo, rustfmt, rust-docs, clippy, and more
+profile = "default"

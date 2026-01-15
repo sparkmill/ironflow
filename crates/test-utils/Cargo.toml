@@ -1,0 +1,29 @@
+[package]
+name = "test-utils"
+version = "0.1.0"
+edition = "2024"
+description = "Shared test utilities for White Rabbit services"
+license = "MIT"
+
+[dependencies]
+# Error handling
+anyhow = { workspace = true }
+
+# Time utilities
+time = { workspace = true }
+
+# Database access
+sqlx = { workspace = true }
+
+# Async runtime (required by tests)
+tokio = { workspace = true }
+
+# URL parsing for database connection strings
+url = { workspace = true }
+
+# UUID generation for unique database names
+# Using v7 for time-ordered, sortable UUIDs
+uuid = { workspace = true, features = ["v7"] }
+
+# Load environment variables from .env files
+dotenvy = { workspace = true }

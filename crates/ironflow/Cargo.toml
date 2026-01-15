@@ -1,0 +1,43 @@
+[package]
+name = "ironflow"
+version = "0.1.0"
+edition = "2024"
+authors = ["Nikita Moshenskiy"]
+license = "MIT"
+description = "Event-sourced workflow engine for durable, long-running processes"
+readme = "README.md"
+repository = "https://github.com/sparkmill/ironflow"
+homepage = "https://github.com/sparkmill/ironflow"
+documentation = "https://docs.rs/ironflow"
+keywords = ["workflow", "event-sourcing", "postgres", "sqlx", "async"]
+categories = [
+  "asynchronous",
+  "database",
+  "service-framework",
+  "web-programming",
+]
+
+[features]
+default = ["postgres"]
+postgres = ["dep:sqlx"]
+
+[dependencies]
+async-trait = { workspace = true }
+ironflow-macros = { path = "../ironflow-macros" }
+nonempty = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+# Optional
+sqlx = { workspace = true, optional = true }
+
+[dev-dependencies]
+test-utils = { path = "../test-utils" }
+anyhow = { workspace = true }
+reqwest = { workspace = true }
+tracing-subscriber = { workspace = true }
