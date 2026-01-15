@@ -12,7 +12,7 @@ use time::OffsetDateTime;
 
 pub struct TimerTestWorkflow;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TimerTestState {
     pub started: bool,
     pub completed: bool,

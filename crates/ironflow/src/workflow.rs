@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use nonempty::NonEmpty;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use time::OffsetDateTime;
 
 use crate::Timer;
@@ -169,7 +169,7 @@ pub trait HasWorkflowId {
 /// let id = WorkflowId::new("ord-123");
 /// assert_eq!(id.as_str(), "ord-123");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkflowId(String);
 
 impl WorkflowId {

@@ -111,7 +111,7 @@ where
 /// Manages workflow runtime lifecycle for tests. Drop signals shutdown automatically.
 pub struct TestApp {
     pub store: PgStore,
-    pub service: Arc<WorkflowService>,
+    pub service: Arc<WorkflowService<PgStore>>,
     pool: PgPool,
     max_attempts: u32,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
@@ -140,7 +140,7 @@ impl<'a> TestAppBuilder<'a> {
     ) -> Self
     where
         H::Workflow: ironflow::Workflow + Send + Sync + 'static,
-        <H::Workflow as ironflow::Workflow>::State: Default + Send + Sync,
+        <H::Workflow as ironflow::Workflow>::State: Default + Send + Sync + serde::Serialize,
         <H::Workflow as ironflow::Workflow>::Input:
             serde::de::DeserializeOwned + ironflow::HasWorkflowId + Send + Sync,
         <H::Workflow as ironflow::Workflow>::Event: serde::Serialize + Send + Sync,

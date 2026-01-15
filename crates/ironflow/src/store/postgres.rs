@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -10,6 +11,7 @@ use uuid::Uuid;
 use super::outbox::{DeadLetter, DeadLetterQuery, OutboxEffect, OutboxStore};
 use super::{
     BeginResult, EventStore, InputObservation, ProjectionStore, Store, StoredEvent, UnitOfWork,
+    WorkflowInstanceSummary, WorkflowQueryStore,
 };
 use crate::Timer;
 use crate::error::Result;
@@ -52,10 +54,111 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+#[derive(sqlx::FromRow)]
+struct WorkflowInstanceRow {
+    workflow_type: String,
+    workflow_id: String,
+    created_at: time::OffsetDateTime,
+    event_count: i64,
+    last_event_at: Option<time::OffsetDateTime>,
+    completed_at: Option<time::OffsetDateTime>,
+}
+
 impl PgStore {
     /// Create a new PostgreSQL store from a connection pool.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    async fn load_events_for_workflow(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        workflow_type: &str,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<StoredEvent>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT global_sequence, workflow_type, workflow_id, sequence, payload, created_at
+            FROM ironflow.events
+            WHERE workflow_type = $1 AND workflow_id = $2
+            ORDER BY sequence ASC
+            "#,
+            workflow_type,
+            workflow_id.as_str()
+        )
+        .fetch_all(&mut **tx)
+        .await?;
+
+        let events = rows
+            .into_iter()
+            .map(|row| StoredEvent {
+                global_sequence: row.global_sequence,
+                workflow_type: row.workflow_type,
+                workflow_id: WorkflowId::from(row.workflow_id),
+                sequence: row.sequence,
+                payload: row.payload,
+                created_at: row.created_at,
+            })
+            .collect();
+
+        Ok(events)
+    }
+}
+
+#[async_trait]
+impl WorkflowQueryStore for PgStore {
+    async fn list_workflows(
+        &self,
+        workflow_type: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<WorkflowInstanceSummary>> {
+        let mut builder = sqlx::QueryBuilder::new(
+            r#"
+            SELECT workflow_type, workflow_id, created_at, event_count, last_event_at, completed_at
+            FROM ironflow.workflow_instances
+            "#,
+        );
+
+        if let Some(workflow_type) = workflow_type {
+            builder.push(" WHERE workflow_type = ");
+            builder.push_bind(workflow_type);
+        }
+
+        builder.push(" ORDER BY last_event_at DESC NULLS LAST, created_at DESC");
+        builder.push(" LIMIT ");
+        builder.push_bind(limit as i64);
+        builder.push(" OFFSET ");
+        builder.push_bind(offset as i64);
+
+        let rows = builder
+            .build_query_as::<WorkflowInstanceRow>()
+            .fetch_all(&self.pool)
+            .await?;
+
+        let workflows = rows
+            .into_iter()
+            .map(|row| WorkflowInstanceSummary {
+                workflow_type: row.workflow_type,
+                workflow_id: WorkflowId::from(row.workflow_id),
+                created_at: row.created_at,
+                event_count: row.event_count,
+                last_event_at: row.last_event_at,
+                completed_at: row.completed_at,
+            })
+            .collect();
+
+        Ok(workflows)
+    }
+
+    async fn fetch_workflow_events(
+        &self,
+        workflow_type: &str,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<StoredEvent>> {
+        let mut tx = self.pool.begin().await?;
+        self.load_events_for_workflow(&mut tx, workflow_type, workflow_id)
+            .await
     }
 }
 
@@ -99,15 +202,9 @@ impl Store for PgStore {
         }
 
         // Load existing events for this stream
-        let events: Vec<Value> = sqlx::query_scalar!(
-            r#"SELECT payload FROM ironflow.events
-               WHERE workflow_type = $1 AND workflow_id = $2
-               ORDER BY sequence"#,
-            workflow_type,
-            workflow_id_str,
-        )
-        .fetch_all(&mut *tx)
-        .await?;
+        let events = self
+            .load_events_for_workflow(&mut tx, workflow_type, workflow_id)
+            .await?;
 
         let next_sequence = events.len() as i64 + 1;
 
@@ -120,7 +217,12 @@ impl Store for PgStore {
             is_completed: false,
         };
 
-        Ok(BeginResult::Active { events, uow })
+        let payloads = events.into_iter().map(|event| event.payload).collect();
+
+        Ok(BeginResult::Active {
+            events: payloads,
+            uow,
+        })
     }
 }
 

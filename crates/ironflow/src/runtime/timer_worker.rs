@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 
 use super::RuntimeConfig;
 use super::registry::WorkflowRuntime;
-use crate::store::{OutboxStore, Store};
+use crate::store::{OutboxStore, Store, WorkflowQueryStore};
 
 /// Timer worker that polls the timers table for due timers.
 ///
@@ -33,7 +33,7 @@ use crate::store::{OutboxStore, Store};
 /// 6. Repeat until shutdown signal
 pub(crate) struct TimerWorker<S, O>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
     O: OutboxStore,
 {
     runtime: Arc<WorkflowRuntime<S>>,
@@ -44,7 +44,7 @@ where
 
 impl<S, O> TimerWorker<S, O>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
     O: OutboxStore,
 {
     /// Create a new timer worker.

@@ -8,6 +8,8 @@ use serde_json::Value;
 use crate::Workflow;
 use crate::error::{Error, Result};
 use crate::runtime::registry::{WorkflowEntry, WorkflowRegistry};
+use crate::store::{Store, StoredEvent, WorkflowInstanceSummary, WorkflowQueryStore};
+use crate::workflow::WorkflowId;
 
 /// Configuration for the workflow service.
 #[derive(Debug, Clone, Default)]
@@ -20,15 +22,30 @@ pub struct WorkflowServiceConfig {
 ///
 /// This is the single entrypoint for executing workflow inputs.
 #[derive(Clone)]
-pub struct WorkflowService {
+pub struct WorkflowService<S>
+where
+    S: Store,
+{
     registry: Arc<WorkflowRegistry>,
+    store: S,
     config: WorkflowServiceConfig,
 }
 
-impl WorkflowService {
+impl<S> WorkflowService<S>
+where
+    S: Store,
+{
     /// Create a new workflow service from a registry.
-    pub(crate) fn new(registry: Arc<WorkflowRegistry>, config: WorkflowServiceConfig) -> Self {
-        Self { registry, config }
+    pub(crate) fn new(
+        store: S,
+        registry: Arc<WorkflowRegistry>,
+        config: WorkflowServiceConfig,
+    ) -> Self {
+        Self {
+            registry,
+            store,
+            config,
+        }
     }
 
     /// Execute a typed workflow input.
@@ -72,5 +89,46 @@ impl WorkflowService {
     /// Returns the service configuration.
     pub fn config(&self) -> &WorkflowServiceConfig {
         &self.config
+    }
+}
+
+impl<S> WorkflowService<S>
+where
+    S: Store + WorkflowQueryStore,
+{
+    /// List workflow instances, optionally filtered by type.
+    pub async fn list_workflows(
+        &self,
+        workflow_type: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<WorkflowInstanceSummary>> {
+        self.store
+            .list_workflows(workflow_type, limit, offset)
+            .await
+    }
+
+    /// Fetch full event history for a workflow instance.
+    pub async fn fetch_workflow_events(
+        &self,
+        workflow_type: &str,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<StoredEvent>> {
+        self.store
+            .fetch_workflow_events(workflow_type, workflow_id)
+            .await
+    }
+
+    /// Rebuild the latest state for a workflow and return it as JSON.
+    pub async fn fetch_latest_state(
+        &self,
+        workflow_type: &str,
+        workflow_id: &WorkflowId,
+    ) -> Result<Value> {
+        let Some((_workflow_type, entry)) = self.registry.get(workflow_type) else {
+            return Err(Error::UnknownWorkflowType(workflow_type.to_string()));
+        };
+
+        entry.replay_latest_state(workflow_id).await
     }
 }

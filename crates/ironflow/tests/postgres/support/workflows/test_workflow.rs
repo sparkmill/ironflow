@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 
 pub struct TestWorkflow;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub enum TestWorkflowStatus {
     #[default]
     Idle,
@@ -25,7 +25,7 @@ pub enum TestWorkflowStatus {
     Stopped,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TestWorkflowState {
     pub status: TestWorkflowStatus,
     pub value: Option<String>,
@@ -268,7 +268,7 @@ impl EffectHandler for TestWorkflowHandler {
 /// Used to test `WorkflowBuilder::register_without_effects()`.
 pub struct EffectlessWorkflow;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct EffectlessState {
     pub value: i32,
 }
