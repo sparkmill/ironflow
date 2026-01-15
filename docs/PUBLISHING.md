@@ -28,24 +28,3 @@ cargo login         # if not already logged in
 cargo publish -p ironflow-macros
 cargo publish -p ironflow
 ```
-
-## Release procedure (step-by-step)
-
-1. Create a release branch (or use your release flow) and update versions.
-2. Run the pre-flight checklist above and ensure the database migrations are in place.
-3. Verify packaging output (order matters):
-   ```sh
-   cargo package -p ironflow-macros
-   cargo package -p ironflow
-   ```
-4. Publish in order and monitor crates.io:
-   ```sh
-   cargo publish -p ironflow-macros
-   cargo publish -p ironflow
-   ```
-5. Tag the release (e.g., `v0.1.0`) and update release notes with migration guidance.
-6. Announce any breaking changes and reference the required migration file(s).
-
-If the workspace grows additional publishable crates, include them in the checklist and update
-the release notes. After publishing, update the docs/state in `docs/` (architecture notes,
-migrations, etc.) so downstream dependents know which migration/feature set ships in a release.
