@@ -18,6 +18,21 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - N/A
 
+## [0.2.0-alpha.2] - 2026-01-16
+
+### Added
+
+- WorkflowService query endpoints for listing workflows, fetching event history, and retrieving latest state as JSON.
+
+### Changed
+
+- WorkflowService is now generic over the store type (`WorkflowService<S>`).
+- Workflow states must implement `serde::Serialize` to support latest state replay.
+
+### Fixed
+
+- N/A
+
 ## [0.1.2] - 2026-01-15
 
 ### Added
