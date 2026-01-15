@@ -44,8 +44,10 @@ pub(crate) trait WorkflowEntry: Send + Sync {
     ) -> Result<Option<Value>, String>;
 
     /// Rebuild the latest state for this workflow from stored events.
-    async fn replay_latest_state(&self, workflow_id: &crate::workflow::WorkflowId)
-        -> crate::Result<Value>;
+    async fn replay_latest_state(
+        &self,
+        workflow_id: &crate::workflow::WorkflowId,
+    ) -> crate::Result<Value>;
 }
 
 /// Typed workflow entry that captures concrete types at registration.
@@ -105,7 +107,10 @@ where
         &self,
         workflow_id: &crate::workflow::WorkflowId,
     ) -> crate::Result<Value> {
-        let events = self.store.fetch_workflow_events(W::TYPE, workflow_id).await?;
+        let events = self
+            .store
+            .fetch_workflow_events(W::TYPE, workflow_id)
+            .await?;
 
         let mut state = W::State::default();
         for event in events {

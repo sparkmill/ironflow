@@ -299,9 +299,11 @@ db_test!(list_workflows_filters_by_type, |pool| {
         .list_workflows(Some(TestWorkflow::TYPE), 10, 0)
         .await?;
     assert_eq!(test_only.len(), 2);
-    assert!(test_only
-        .iter()
-        .all(|workflow| workflow.workflow_type == TestWorkflow::TYPE));
+    assert!(
+        test_only
+            .iter()
+            .all(|workflow| workflow.workflow_type == TestWorkflow::TYPE)
+    );
 
     Ok(())
 });
