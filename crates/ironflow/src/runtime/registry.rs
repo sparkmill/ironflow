@@ -19,7 +19,7 @@ use crate::effect::{EffectContext, EffectHandler};
 use crate::engine::WorkflowEngine;
 use crate::error::Error;
 use crate::service::{WorkflowService, WorkflowServiceConfig};
-use crate::store::{DeadLetter, DeadLetterQuery, OutboxStore, Store};
+use crate::store::{DeadLetter, DeadLetterQuery, OutboxStore, Store, WorkflowQueryStore};
 
 /// Type-erased workflow entry for dynamic dispatch.
 ///
@@ -42,6 +42,10 @@ pub(crate) trait WorkflowEntry: Send + Sync {
         effect_json: Value,
         ctx: &EffectContext,
     ) -> Result<Option<Value>, String>;
+
+    /// Rebuild the latest state for this workflow from stored events.
+    async fn replay_latest_state(&self, workflow_id: &crate::workflow::WorkflowId)
+        -> crate::Result<Value>;
 }
 
 /// Typed workflow entry that captures concrete types at registration.
@@ -63,11 +67,11 @@ where
 impl<W, H, S> WorkflowEntry for TypedWorkflowEntry<W, H, S>
 where
     W: Workflow + Send + Sync + 'static,
-    W::State: Send,
+    W::State: Send + Serialize,
     W::Input: Serialize + DeserializeOwned + Send + Sync,
     W::Effect: DeserializeOwned,
     H: EffectHandler<Workflow = W>,
-    S: Store,
+    S: Store + WorkflowQueryStore,
 {
     async fn execute(&self, input_json: Value) -> crate::Result<()> {
         let input: W::Input = serde_json::from_value(input_json)?;
@@ -95,6 +99,21 @@ where
             }
             None => Ok(None),
         }
+    }
+
+    async fn replay_latest_state(
+        &self,
+        workflow_id: &crate::workflow::WorkflowId,
+    ) -> crate::Result<Value> {
+        let events = self.store.fetch_workflow_events(W::TYPE, workflow_id).await?;
+
+        let mut state = W::State::default();
+        for event in events {
+            let typed: W::Event = serde_json::from_value(event.payload)?;
+            state = W::evolve(state, typed);
+        }
+
+        Ok(serde_json::to_value(state)?)
     }
 }
 
@@ -164,7 +183,7 @@ impl WorkflowRegistry {
 /// ```
 pub struct WorkflowBuilder<S>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
 {
     store: S,
     registry: WorkflowRegistry,
@@ -175,7 +194,7 @@ where
 
 impl<S> WorkflowBuilder<S>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
 {
     /// Create a new builder with the given store and service configuration.
     fn new(store: S, service_config: WorkflowServiceConfig) -> Self {
@@ -199,7 +218,7 @@ where
     where
         H: EffectHandler,
         H::Workflow: Workflow + Send + Sync + 'static,
-        <H::Workflow as Workflow>::State: Send,
+        <H::Workflow as Workflow>::State: Send + Serialize,
         <H::Workflow as Workflow>::Input: Serialize + DeserializeOwned + Send + Sync,
         <H::Workflow as Workflow>::Effect: DeserializeOwned,
     {
@@ -222,7 +241,7 @@ where
     pub fn register_without_effects<W>(self) -> Self
     where
         W: Workflow<Effect = ()> + Send + Sync + 'static,
-        W::State: Send,
+        W::State: Send + Serialize,
         W::Input: Serialize + DeserializeOwned + Send + Sync,
         W::Effect: DeserializeOwned,
     {
@@ -317,7 +336,7 @@ where
 #[derive(Clone)]
 pub struct WorkflowRuntime<S>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
 {
     store: S,
     service: Arc<WorkflowService<S>>,
@@ -327,7 +346,7 @@ where
 
 impl<S> WorkflowRuntime<S>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
 {
     /// Create a new runtime builder.
     pub fn builder(store: S, service_config: WorkflowServiceConfig) -> WorkflowBuilder<S> {
@@ -357,7 +376,7 @@ where
 
 impl<S> WorkflowRuntime<S>
 where
-    S: Store + OutboxStore,
+    S: Store + WorkflowQueryStore + OutboxStore,
 {
     /// Run the effect and timer workers until shutdown signal.
     ///

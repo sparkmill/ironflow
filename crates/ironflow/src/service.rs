@@ -119,24 +119,16 @@ where
             .await
     }
 
-    /// Rebuild the latest state for a typed workflow by replaying its events.
-    pub async fn fetch_latest_state<W>(&self, workflow_id: &WorkflowId) -> Result<W::State>
-    where
-        W: Workflow + Send + Sync + 'static,
-        W::State: Default,
-        W::Event: DeserializeOwned,
-    {
-        let events = self
-            .store
-            .fetch_workflow_events(W::TYPE, workflow_id)
-            .await?;
+    /// Rebuild the latest state for a workflow and return it as JSON.
+    pub async fn fetch_latest_state(
+        &self,
+        workflow_type: &str,
+        workflow_id: &WorkflowId,
+    ) -> Result<Value> {
+        let Some((_workflow_type, entry)) = self.registry.get(workflow_type) else {
+            return Err(Error::UnknownWorkflowType(workflow_type.to_string()));
+        };
 
-        let mut state = W::State::default();
-        for event in events {
-            let typed: W::Event = serde_json::from_value(event.payload)?;
-            state = W::evolve(state, typed);
-        }
-
-        Ok(state)
+        entry.replay_latest_state(workflow_id).await
     }
 }
