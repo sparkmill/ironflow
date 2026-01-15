@@ -17,7 +17,8 @@ use crate::support::db::{
 };
 use crate::support::helpers::assert_event_types;
 use crate::support::workflows::test_workflow::{
-    TestWorkflow, TestWorkflowEvent, TestWorkflowHandler, TestWorkflowInput,
+    EffectlessInput, EffectlessWorkflow, TestWorkflow, TestWorkflowEvent, TestWorkflowHandler,
+    TestWorkflowInput,
 };
 
 fn build_service(
@@ -265,5 +266,86 @@ db_test!(execute_records_input_observation_when_enabled, |pool| {
     assert_eq!(observations.len(), 1);
     assert_eq!(observations[0].0, "Ping");
     assert_eq!(observations[0].1["type"], "Ping");
+    Ok(())
+});
+
+// =============================================================================
+// Query APIs
+// =============================================================================
+
+db_test!(list_workflows_filters_by_type, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = WorkflowRuntime::builder(store, WorkflowServiceConfig::default())
+        .register(TestWorkflowHandler::new())
+        .register_without_effects::<EffectlessWorkflow>()
+        .build_service()?;
+
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("test-1"))
+        .await?;
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("test-2"))
+        .await?;
+    service
+        .execute::<EffectlessWorkflow>(&EffectlessInput::Increment {
+            id: "effectless-1".into(),
+        })
+        .await?;
+
+    let all = service.list_workflows(None, 10, 0).await?;
+    assert_eq!(all.len(), 3);
+
+    let test_only = service
+        .list_workflows(Some(TestWorkflow::TYPE), 10, 0)
+        .await?;
+    assert_eq!(test_only.len(), 2);
+    assert!(test_only
+        .iter()
+        .all(|workflow| workflow.workflow_type == TestWorkflow::TYPE));
+
+    Ok(())
+});
+
+db_test!(fetch_workflow_events_returns_history, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+    let workflow_id = WorkflowId::new("history-1");
+
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::increment("history-1"))
+        .await?;
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::increment("history-1"))
+        .await?;
+
+    let events = service
+        .fetch_workflow_events(TestWorkflow::TYPE, &workflow_id)
+        .await?;
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].sequence, 1);
+    assert_eq!(events[1].sequence, 2);
+    assert_eq!(events[0].payload["type"], "Incremented");
+    assert_eq!(events[1].payload["type"], "Incremented");
+    Ok(())
+});
+
+db_test!(fetch_latest_state_returns_json, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+    let workflow_id = WorkflowId::new("state-1");
+
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::increment("state-1"))
+        .await?;
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::increment("state-1"))
+        .await?;
+
+    let state = service
+        .fetch_latest_state(TestWorkflow::TYPE, &workflow_id)
+        .await?;
+
+    assert_eq!(state["counter"].as_i64(), Some(2));
     Ok(())
 });
