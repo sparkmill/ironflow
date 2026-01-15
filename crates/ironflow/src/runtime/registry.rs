@@ -250,15 +250,19 @@ where
     }
 
     /// Build the workflow service without starting workers.
-    pub fn build_service(self) -> crate::Result<WorkflowService> {
+    pub fn build_service(self) -> crate::Result<WorkflowService<S>> {
         if let Some(workflow_type) = self.duplicate_workflow_type {
             return Err(Error::DuplicateWorkflowType(workflow_type));
         }
         let registry = Arc::new(self.registry);
-        Ok(WorkflowService::new(registry, self.service_config))
+        Ok(WorkflowService::new(
+            self.store,
+            registry,
+            self.service_config,
+        ))
     }
 
-    fn build_parts(self) -> crate::Result<(Arc<WorkflowService>, WorkflowRuntime<S>)> {
+    fn build_parts(self) -> crate::Result<(Arc<WorkflowService<S>>, WorkflowRuntime<S>)> {
         if let Some(workflow_type) = self.duplicate_workflow_type {
             return Err(Error::DuplicateWorkflowType(workflow_type));
         }
@@ -270,6 +274,7 @@ where
 
         let registry = Arc::new(self.registry);
         let service = Arc::new(WorkflowService::new(
+            self.store.clone(),
             Arc::clone(&registry),
             self.service_config,
         ));
@@ -315,7 +320,7 @@ where
     S: Store,
 {
     store: S,
-    service: Arc<WorkflowService>,
+    service: Arc<WorkflowService<S>>,
     config: RuntimeConfig,
     worker_id: String,
 }
@@ -345,7 +350,7 @@ where
     }
 
     /// Returns the workflow service handle.
-    pub(crate) fn service(&self) -> &WorkflowService {
+    pub(crate) fn service(&self) -> &WorkflowService<S> {
         &self.service
     }
 }
