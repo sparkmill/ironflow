@@ -37,7 +37,7 @@ pub struct InputObservation {
 }
 
 /// Stored event with global ordering metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredEvent {
     pub global_sequence: i64,
     pub workflow_type: String,

@@ -134,11 +134,11 @@ impl WorkflowRegistry {
     fn register<W, H, S>(&mut self, store: S, record_input_observations: bool, handler: H)
     where
         W: Workflow + Send + Sync + 'static,
-        W::State: Send,
+        W::State: Send + Serialize,
         W::Input: Serialize + DeserializeOwned + Send + Sync,
         W::Effect: DeserializeOwned,
         H: EffectHandler<Workflow = W>,
-        S: Store,
+        S: Store + WorkflowQueryStore,
     {
         let entry = TypedWorkflowEntry {
             store,

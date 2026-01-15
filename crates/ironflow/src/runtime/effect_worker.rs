@@ -9,7 +9,7 @@ use tracing::{debug, error, info, warn};
 use super::RuntimeConfig;
 use super::registry::WorkflowRuntime;
 use crate::effect::EffectContext;
-use crate::store::{OutboxEffect, OutboxStore, Store};
+use crate::store::{OutboxEffect, OutboxStore, Store, WorkflowQueryStore};
 
 /// Effect worker that polls the outbox for immediate effects.
 ///
@@ -28,7 +28,7 @@ use crate::store::{OutboxEffect, OutboxStore, Store};
 /// 7. Repeat until shutdown signal
 pub(crate) struct EffectWorker<S, O>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
     O: OutboxStore,
 {
     runtime: Arc<WorkflowRuntime<S>>,
@@ -39,7 +39,7 @@ where
 
 impl<S, O> EffectWorker<S, O>
 where
-    S: Store,
+    S: Store + WorkflowQueryStore,
     O: OutboxStore,
 {
     /// Create a new effect worker.

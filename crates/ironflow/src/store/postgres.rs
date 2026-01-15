@@ -54,6 +54,16 @@ pub struct PgStore {
     pool: PgPool,
 }
 
+#[derive(sqlx::FromRow)]
+struct WorkflowInstanceRow {
+    workflow_type: String,
+    workflow_id: String,
+    created_at: time::OffsetDateTime,
+    event_count: i64,
+    last_event_at: Option<time::OffsetDateTime>,
+    completed_at: Option<time::OffsetDateTime>,
+}
+
 impl PgStore {
     /// Create a new PostgreSQL store from a connection pool.
     pub fn new(pool: PgPool) -> Self {
@@ -103,20 +113,28 @@ impl WorkflowQueryStore for PgStore {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<WorkflowInstanceSummary>> {
-        let rows = sqlx::query!(
+        let mut builder = sqlx::QueryBuilder::new(
             r#"
             SELECT workflow_type, workflow_id, created_at, event_count, last_event_at, completed_at
             FROM ironflow.workflow_instances
-            WHERE ($1::text IS NULL OR workflow_type = $1)
-            ORDER BY last_event_at DESC NULLS LAST, created_at DESC
-            LIMIT $2 OFFSET $3
             "#,
-            workflow_type,
-            limit as i64,
-            offset as i64
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        );
+
+        if let Some(workflow_type) = workflow_type {
+            builder.push(" WHERE workflow_type = ");
+            builder.push_bind(workflow_type);
+        }
+
+        builder.push(" ORDER BY last_event_at DESC NULLS LAST, created_at DESC");
+        builder.push(" LIMIT ");
+        builder.push_bind(limit as i64);
+        builder.push(" OFFSET ");
+        builder.push_bind(offset as i64);
+
+        let rows = builder
+            .build_query_as::<WorkflowInstanceRow>()
+            .fetch_all(&self.pool)
+            .await?;
 
         let workflows = rows
             .into_iter()
