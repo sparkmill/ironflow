@@ -111,7 +111,7 @@ where
 /// Manages workflow runtime lifecycle for tests. Drop signals shutdown automatically.
 pub struct TestApp {
     pub store: PgStore,
-    pub service: Arc<WorkflowService>,
+    pub service: Arc<WorkflowService<PgStore>>,
     pool: PgPool,
     max_attempts: u32,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,

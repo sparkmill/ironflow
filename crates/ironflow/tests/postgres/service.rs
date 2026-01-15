@@ -20,7 +20,10 @@ use crate::support::workflows::test_workflow::{
     TestWorkflow, TestWorkflowEvent, TestWorkflowHandler, TestWorkflowInput,
 };
 
-fn build_service(store: PgStore, record_input_observations: bool) -> ironflow::WorkflowService {
+fn build_service(
+    store: PgStore,
+    record_input_observations: bool,
+) -> ironflow::WorkflowService<PgStore> {
     let config = WorkflowServiceConfig {
         record_input_observations,
     };

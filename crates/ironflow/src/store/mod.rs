@@ -11,7 +11,8 @@ mod postgres;
 
 use std::future::Future;
 
-use serde::Serialize;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -44,6 +45,17 @@ pub struct StoredEvent {
     pub sequence: i64,
     pub payload: Value,
     pub created_at: OffsetDateTime,
+}
+
+/// Summary of a workflow instance for listing/monitoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowInstanceSummary {
+    pub workflow_type: String,
+    pub workflow_id: WorkflowId,
+    pub created_at: OffsetDateTime,
+    pub event_count: i64,
+    pub last_event_at: Option<OffsetDateTime>,
+    pub completed_at: Option<OffsetDateTime>,
 }
 
 /// Result of beginning a unit of work.
@@ -186,4 +198,23 @@ pub trait ProjectionStore: Send + Sync + Clone + 'static {
         projection_name: &str,
         global_sequence: i64,
     ) -> impl Future<Output = Result<()>> + Send;
+}
+
+/// Query-only store operations for inspecting workflow history.
+#[async_trait]
+pub trait WorkflowQueryStore: Send + Sync + Clone + 'static {
+    /// List workflow instances, optionally filtering by type.
+    async fn list_workflows(
+        &self,
+        workflow_type: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<WorkflowInstanceSummary>>;
+
+    /// Fetch all events for a workflow instance ordered by sequence.
+    async fn fetch_workflow_events(
+        &self,
+        workflow_type: &str,
+        workflow_id: &WorkflowId,
+    ) -> Result<Vec<StoredEvent>>;
 }

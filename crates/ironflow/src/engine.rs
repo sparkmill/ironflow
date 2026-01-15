@@ -12,6 +12,6 @@ pub struct WorkflowEngine<S>
 where
     S: Store,
 {
-    pub service: Arc<WorkflowService>,
+    pub service: Arc<WorkflowService<S>>,
     pub runtime: WorkflowRuntime<S>,
 }
