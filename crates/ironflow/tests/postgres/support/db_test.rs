@@ -61,7 +61,7 @@ where
 
     // Run migrations from the ironflow crate.
     // Path is relative to CARGO_MANIFEST_DIR.
-    sqlx::migrate!("../ironflow/migrations").run(&pool).await?;
+    sqlx::migrate!().run(&pool).await?;
 
     // Run the user-provided test body
     let result = f(&pool).await;
@@ -139,7 +139,7 @@ fn make_db_name(test_name: &str) -> String {
 /// Usage:
 ///
 /// ```ignore
-/// use test_utils::db_test;
+/// use crate::db_test;
 ///
 /// db_test!(test_shutdown_releases_all_leases, |pool| {
 ///     // `pool` is &PgPool
@@ -156,13 +156,9 @@ macro_rules! db_test {
     ($name:ident, |$pool:ident| $body:block) => {
         #[tokio::test(flavor = "multi_thread")]
         async fn $name() -> anyhow::Result<()> {
-            // Import the helper from this crate/module.
-            // Adjust the path if you put `with_test_db` somewhere else.
-            use $crate::db::with_test_db;
-
             let test_name = stringify!($name);
 
-            with_test_db(test_name, |$pool| {
+            $crate::support::db_test::with_test_db(test_name, |$pool| {
                 let fut = async move { $body };
                 Box::pin(fut)
             })

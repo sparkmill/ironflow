@@ -55,7 +55,7 @@ Ironflow implements an event-sourced workflow engine with an async effect outbox
 
   Enable the `postgres` feature to pull in SQLx/Postgres support and pair it with `ironflow-macros` when you rely on derives such as `HasWorkflowId`.
 
-- Reuse the fixtures under `crates/ironflow/tests/postgres/` for integration scenarios or lean on `test-utils` when authoring your own suites. The README in that directory explains each test group and supporting helper.
+- Reuse the fixtures under `crates/ironflow/tests/postgres/` for integration scenarios; the README in that directory explains each test group and supporting helper.
 
 ### Tooling
 
@@ -135,16 +135,16 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-### Test Utilities (`test-utils` crate)
+### Test Utilities
 
-The `test-utils` crate provides shared testing utilities for database isolation and environment variables.
+The Postgres integration suite includes shared test helpers under `crates/ironflow/tests/postgres/support/` for database isolation and environment variables.
 
 #### Database Testing
 
 Using the macro (recommended):
 
 ```rust
-use test_utils::db_test;
+use crate::db_test;
 
 db_test!(test_users, |pool| {
     sqlx::query!("SELECT COUNT(*) FROM users")

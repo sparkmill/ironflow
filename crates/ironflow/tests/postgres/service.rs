@@ -8,9 +8,9 @@
 //! - Terminal state handling
 //! - Input observation recording
 
+use crate::db_test;
 use ironflow::runtime::{RuntimeConfig, WorkflowRuntime};
 use ironflow::{Error, PgStore, Workflow, WorkflowId, WorkflowServiceConfig};
-use test_utils::db_test;
 
 use crate::support::db::{
     count_events, fetch_effects, fetch_events, fetch_input_observations, seed_events,

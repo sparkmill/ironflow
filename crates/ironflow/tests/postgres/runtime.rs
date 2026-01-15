@@ -3,12 +3,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::db_test;
 use async_trait::async_trait;
 use ironflow::{
     DeadLetterQuery, EffectContext, EffectHandler, OutboxStore, PgStore, RuntimeConfig, Timer,
     Workflow, WorkflowId,
 };
-use test_utils::db_test;
 
 use crate::support::db;
 use crate::support::helpers::{

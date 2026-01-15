@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ironflow", "crates/ironflow-macros", "crates/test-utils"]
+members = ["crates/ironflow", "crates/ironflow-macros"]
 resolver = "2"
 
 [workspace.package]
@@ -27,7 +27,6 @@ panic = "abort"    # Faster panics, smaller binary, immediate container restart 
 [workspace.dependencies]
 # Local crates
 ironflow-macros = { version = "0.1.0", path = "crates/ironflow-macros" }
-test-utils = { version = "0.1.0", path = "crates/test-utils" }
 # Async runtime
 tokio = { version = "1", default-features = false, features = [
   "macros",

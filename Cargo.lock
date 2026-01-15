@@ -841,18 +841,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "dotenvy",
  "ironflow-macros",
  "nonempty",
  "reqwest",
  "serde",
  "serde_json",
  "sqlx",
- "test-utils",
  "thiserror 2.0.17",
  "time",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 
@@ -2023,19 +2024,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "test-utils"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dotenvy",
- "sqlx",
- "time",
- "tokio",
- "url",
- "uuid",
 ]
 
 [[package]]

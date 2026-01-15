@@ -4,7 +4,7 @@
 
 - `crates/ironflow/` contains the main runtime crate and most source code in `crates/ironflow/src/`.
 - `crates/ironflow-macros/` holds the proc-macro crate used by the runtime.
-- `crates/test-utils/` is shared testing support.
+- `crates/ironflow/tests/postgres/support/` holds shared test utilities for the Postgres integration suite.
 - `crates/ironflow/tests/postgres/` contains Postgres integration tests and fixtures.
 - `crates/ironflow/migrations/` holds SQLx migrations (currently `crates/ironflow/migrations/20251230000001_create_ironflow_schema.sql`).
 - `docs/` contains architecture and workflow guides; start at `docs/README.md`.

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
+use crate::db_test;
 use ironflow::store::{
     BeginResult, DeadLetterQuery, EventStore, OutboxStore, PgStore, ProjectionStore, Store,
     UnitOfWork,
@@ -12,7 +13,6 @@ use ironflow::{
     InputObservation, Timer, Workflow, WorkflowId, WorkflowRuntime, WorkflowServiceConfig,
 };
 use serde::{Deserialize, Serialize};
-use test_utils::db_test;
 
 use crate::support::db::{
     count_events_for_workflow, count_timers, fetch_effect_id, fetch_outbox_payload,

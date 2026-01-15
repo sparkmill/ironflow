@@ -3,8 +3,8 @@
 //! These tests verify complete workflow lifecycles that require timer scheduling
 //! and cancellation. Effect processing and retry behavior tests are in runtime.rs.
 
+use crate::db_test;
 use ironflow::Workflow;
-use test_utils::db_test;
 
 use crate::support::helpers::{DEFAULT_TEST_TIMEOUT, TestApp, assert_event_types};
 use crate::support::workflows::timer_test::{TimerTestHandler, TimerTestInput, TimerTestWorkflow};

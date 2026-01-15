@@ -44,7 +44,8 @@ uuid = { workspace = true }
 sqlx = { workspace = true, optional = true }
 
 [dev-dependencies]
-test-utils = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
 tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+url = { workspace = true }
