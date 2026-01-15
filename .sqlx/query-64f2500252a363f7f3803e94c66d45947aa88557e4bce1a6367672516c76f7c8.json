@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ironflow.outbox (workflow_type, workflow_id, payload)\n                   VALUES ($1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "64f2500252a363f7f3803e94c66d45947aa88557e4bce1a6367672516c76f7c8"
+}

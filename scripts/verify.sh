@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${ROOT_DIR}"
 
-TOTAL_STEPS=9
+TOTAL_STEPS=10
 STEP=1
 
 step() {
@@ -22,6 +22,9 @@ step "Checking TOML formatting"
 
 step "Checking Markdown formatting"
 "${SCRIPT_DIR}/format-md.sh" --check
+
+step "Preparing SQLx metadata"
+cargo sqlx prepare --workspace --check
 
 step "Running typecheck"
 cargo check --workspace --all-targets --all-features

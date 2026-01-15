@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO ironflow.projection_positions (projection_name)\n            VALUES ($1)\n            ON CONFLICT (projection_name) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "77639a234d9b15104e922df08e54025d9d82b8061c7a533c53f3e8aa897a3c90"
+}

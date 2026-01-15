@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ironflow.timers (workflow_type, workflow_id, fire_at, input)\n                       VALUES ($1, $2, $3, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e3c1117ad2024d7068f9c72b5f434dcae46f62aae022cb0dceb36e5f49d07757"
+}

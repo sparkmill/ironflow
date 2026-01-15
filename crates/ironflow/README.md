@@ -28,6 +28,9 @@ and timers, and it integrates with the `ironflow-macros` helpers such as `HasWor
    use ironflow::{Decider, Workflow, WorkflowId};
    ```
 
+If you build without a database, set `SQLX_OFFLINE=true` and rely on the shipped `.sqlx/` metadata
+(generated via `cargo sqlx prepare`).
+
 ## Migrations
 
 The database schema lives under `migrations/20251230000001_create_ironflow_schema.sql`.

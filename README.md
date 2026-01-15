@@ -55,6 +55,8 @@ Ironflow implements an event-sourced workflow engine with an async effect outbox
 
   Enable the `postgres` feature to pull in SQLx/Postgres support and pair it with `ironflow-macros` when you rely on derives such as `HasWorkflowId`.
 
+  If you build without a database, set `SQLX_OFFLINE=true` and rely on the shipped `.sqlx/` metadata (generated via `cargo sqlx prepare`).
+
 - Reuse the fixtures under `crates/ironflow/tests/postgres/` for integration scenarios; the README in that directory explains each test group and supporting helper.
 
 ### Tooling
