@@ -32,6 +32,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sql == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -48,6 +49,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.toml == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -68,6 +70,7 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       DATABASE_URL: "postgres://postgres:postgres@localhost:5432/ironflow"
       TEST_ADMIN_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
