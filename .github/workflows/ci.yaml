@@ -32,6 +32,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sql == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -48,19 +49,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.toml == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
-      - name: Cache taplo binary
-        id: cache-taplo
-        uses: actions/cache@v5
-        with:
-          path: ~/.cargo/bin/taplo
-          key: ${{ runner.os }}-taplo-0.10.0
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Install taplo
-        if: steps.cache-taplo.outputs.cache-hit != 'true'
-        run: cargo install taplo-cli --version 0.10.0 --locked
+        run: cargo install taplo-cli --locked
 
       - name: Check TOML formatting
         run: ./scripts/format-toml.sh --check
@@ -68,6 +65,7 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       DATABASE_URL: "postgres://postgres:postgres@localhost:5432/ironflow"
       TEST_ADMIN_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
@@ -85,7 +83,6 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .
           cache-on-failure: true
           cache-all-crates: true
 
