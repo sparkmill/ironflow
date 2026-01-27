@@ -87,7 +87,7 @@ strum = { version = "0.27", features = ["derive"] }
 zeroize = "1.8"
 
 # Date and time
-time = { version = "=0.3.45", features = [
+time = { version = "=0.3.46", features = [
   "serde",
   "serde-human-readable",
   "macros",
