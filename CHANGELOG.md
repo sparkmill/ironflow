@@ -18,6 +18,13 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - N/A
 
+## [0.2.0] - 2026-02-10
+
+### Changed
+
+- Removed 38 unused workspace dependencies from root `Cargo.toml`.
+- Dependecies updated.
+
 ## [0.2.0-alpha.2] - 2026-01-16
 
 ### Added
