@@ -31,6 +31,3 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Foundation release of the Ironflow runtime crate and procedural macros.
 
 [Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/sparkmill/ironflow/compare/v0.2.0-alpha.2...v0.2.0
-[0.2.0-alpha.2]: https://github.com/sparkmill/ironflow/compare/v0.1.2...v0.2.0-alpha.2
-[0.1.2]: https://github.com/sparkmill/ironflow/releases/tag/v0.1.2
