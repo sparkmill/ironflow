@@ -6,17 +6,12 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- N/A
+## [0.2.0] - 2026-02-10
 
 ### Changed
 
-- N/A
-
-### Fixed
-
-- N/A
+- Removed 38 unused workspace dependencies from root `Cargo.toml`.
+- Dependencies updated.
 
 ## [0.2.0-alpha.2] - 2026-01-16
 
@@ -29,12 +24,10 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - WorkflowService is now generic over the store type (`WorkflowService<S>`).
 - Workflow states must implement `serde::Serialize` to support latest state replay.
 
-### Fixed
-
-- N/A
-
 ## [0.1.2] - 2026-01-15
 
 ### Added
 
 - Foundation release of the Ironflow runtime crate and procedural macros.
+
+[Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.2.0...HEAD
