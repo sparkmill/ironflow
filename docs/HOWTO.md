@@ -154,6 +154,56 @@ async fn handle(
 
 ---
 
+## Unique Key Constraint (At-Most-One Active Workflow)
+
+Use `Workflow::unique_key()` to enforce that only one active workflow of a
+given type can exist per business key. This is useful when callers generate
+fresh UUIDs for each workflow but you need exclusivity on an external key
+(e.g., one active price change per listing).
+
+### Implement `unique_key()` and `is_terminal()`
+
+```rust
+impl Workflow for PaymentWorkflow {
+    // ...
+
+    fn unique_key(input: &PaymentInput) -> Option<String> {
+        match input {
+            PaymentInput::Create { order_id, .. } => Some(format!("order-{order_id}")),
+            _ => None, // subsequent inputs don't need the constraint
+        }
+    }
+
+    fn is_terminal(state: &PaymentState) -> bool {
+        matches!(state.status, PaymentStatus::Settled | PaymentStatus::Failed)
+    }
+}
+```
+
+### Handle the conflict
+
+When a second workflow tries to start with the same key while the first is
+still active, the service returns `Error::UniqueKeyConflict`:
+
+```rust
+match service.execute::<PaymentWorkflow>(&input).await {
+    Ok(()) => { /* processed */ }
+    Err(ironflow::Error::UniqueKeyConflict { .. }) => {
+        // another active payment already exists for this order
+    }
+    Err(e) => return Err(e.into()),
+}
+```
+
+### Key points
+
+- The constraint is enforced by a PostgreSQL partial unique index — no race window.
+- Only applies while the workflow is active (`completed_at IS NULL`).
+- Once the workflow completes, the key is released and a new workflow can start.
+- `is_terminal()` **must** be implemented; otherwise the key is held forever.
+
+---
+
 ## Workflows Without Effects
 
 If a workflow never emits effects, you can register it with a no-op handler:

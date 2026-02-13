@@ -131,6 +131,36 @@ pub trait Workflow {
     fn is_terminal(_state: &Self::State) -> bool {
         false
     }
+
+    /// Optional unique key for at-most-one-active-workflow constraint.
+    ///
+    /// When set, the store enforces that only one active (non-completed) workflow
+    /// of this type can exist with the same unique key. If a second workflow tries
+    /// to start with the same key while the first is still active, it will fail
+    /// with [`Error::UniqueKeyConflict`](crate::Error::UniqueKeyConflict).
+    ///
+    /// Once the first workflow completes (i.e., [`is_terminal`](Self::is_terminal)
+    /// returns `true`), the key is released and a new workflow can start.
+    ///
+    /// **Important:** Any workflow that uses `unique_key()` must also implement
+    /// `is_terminal()`. Otherwise the workflow never completes and the key is
+    /// held forever.
+    ///
+    /// Default implementation returns `None` — no constraint.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// fn unique_key(input: &Self::Input) -> Option<String> {
+    ///     match input {
+    ///         PaymentInput::Create { order_id, .. } => Some(format!("order-{order_id}")),
+    ///         _ => None,
+    ///     }
+    /// }
+    /// ```
+    fn unique_key(_input: &Self::Input) -> Option<String> {
+        None
+    }
 }
 
 /// Extracts the workflow instance ID (business key) from an input.

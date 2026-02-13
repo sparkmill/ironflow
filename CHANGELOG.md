@@ -6,6 +6,18 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-13
+
+### Added
+
+- Unique key constraint: opt-in at-most-one-active-workflow per business key via `Workflow::unique_key()`.
+- New migration adding `unique_key` column and partial unique index on `workflow_instances`.
+- `Error::UniqueKeyConflict` variant returned when a second workflow conflicts with an active one.
+
+### Changed
+
+- `Store::begin()` accepts an additional `unique_key: Option<&str>` parameter.
+
 ## [0.2.0] - 2026-02-10
 
 ### Changed
@@ -30,4 +42,5 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Foundation release of the Ironflow runtime crate and procedural macros.
 
-[Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sparkmill/ironflow/compare/v0.2.0...v0.3.0

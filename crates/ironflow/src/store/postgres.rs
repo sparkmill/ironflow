@@ -169,20 +169,34 @@ impl Store for PgStore {
         &'a self,
         workflow_type: &'static str,
         workflow_id: &WorkflowId,
+        unique_key: Option<&str>,
     ) -> Result<BeginResult<Self::UnitOfWork<'a>>> {
         let mut tx = self.pool.begin().await?;
         let workflow_id_str = workflow_id.as_str();
 
-        // Ensure workflow instance row exists (idempotent)
-        sqlx::query!(
-            r#"INSERT INTO ironflow.workflow_instances (workflow_type, workflow_id)
-               VALUES ($1, $2)
-               ON CONFLICT DO NOTHING"#,
+        // ON CONFLICT only covers the PK — a violation of the partial unique
+        // index on (workflow_type, unique_key) is NOT swallowed by DO NOTHING.
+        let result = sqlx::query!(
+            r#"INSERT INTO ironflow.workflow_instances (workflow_type, workflow_id, unique_key)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (workflow_type, workflow_id) DO NOTHING"#,
             workflow_type,
             workflow_id_str,
+            unique_key,
         )
         .execute(&mut *tx)
-        .await?;
+        .await;
+
+        match result {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(ref db_err)) if db_err.is_unique_violation() => {
+                return Err(crate::Error::UniqueKeyConflict {
+                    workflow_type: workflow_type.to_string(),
+                    unique_key: unique_key.unwrap_or_default().to_string(),
+                });
+            }
+            Err(e) => return Err(e.into()),
+        }
 
         // Acquire row-level lock and check completion status
         let row = sqlx::query!(

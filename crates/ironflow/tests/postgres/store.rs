@@ -10,7 +10,7 @@ use ironflow::store::{
     UnitOfWork,
 };
 use ironflow::{
-    InputObservation, Timer, Workflow, WorkflowId, WorkflowRuntime, WorkflowServiceConfig,
+    Error, InputObservation, Timer, Workflow, WorkflowId, WorkflowRuntime, WorkflowServiceConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +34,7 @@ async fn begin_active<'a>(
     wf_type: &'static str,
     wf_id: &WorkflowId,
 ) -> anyhow::Result<(Vec<serde_json::Value>, <PgStore as Store>::UnitOfWork<'a>)> {
-    match store.begin(wf_type, wf_id).await? {
+    match store.begin(wf_type, wf_id, None).await? {
         BeginResult::Active { events, uow, .. } => Ok((events, uow)),
         BeginResult::Completed => Err(anyhow::anyhow!(
             "expected Active for {wf_type}/{wf_id}, got Completed"
@@ -407,7 +407,7 @@ db_test!(
         let wf_id1 = workflow_id.clone();
         let task1 = tokio::spawn(async move {
             let BeginResult::Active { mut uow, .. } = store1
-                .begin("test", &wf_id1)
+                .begin("test", &wf_id1, None)
                 .await
                 .expect("begin should succeed")
             else {
@@ -435,7 +435,7 @@ db_test!(
             let BeginResult::Active {
                 events, mut uow, ..
             } = store2
-                .begin("test", &wf_id2)
+                .begin("test", &wf_id2, None)
                 .await
                 .expect("begin should succeed")
             else {
@@ -486,7 +486,7 @@ db_test!(
             let handle = tokio::spawn(async move {
                 let workflow_id = WorkflowId::new(format!("parallel-{i}"));
                 let BeginResult::Active { mut uow, .. } = store
-                    .begin("test", &workflow_id)
+                    .begin("test", &workflow_id, None)
                     .await
                     .expect("begin should succeed")
                 else {
@@ -541,7 +541,11 @@ db_test!(begin_returns_completed_for_completed_workflow, |pool| {
         .await?;
 
     let result = store
-        .begin(TestWorkflow::TYPE, &WorkflowId::new("completed-begin-test"))
+        .begin(
+            TestWorkflow::TYPE,
+            &WorkflowId::new("completed-begin-test"),
+            None,
+        )
         .await?;
     assert!(matches!(result, BeginResult::Completed));
 
@@ -975,6 +979,161 @@ db_test!(event_deserialization_failure_includes_context, |pool| {
     assert!(
         err_string.contains("test_workflow") || err_string.contains("corrupted-1"),
         "Error should include workflow context: {err_string}"
+    );
+
+    Ok(())
+});
+
+// =============================================================================
+// Unique key constraint tests
+// =============================================================================
+
+db_test!(unique_key_conflict_rejects_second_active_workflow, |pool| {
+    let store = PgStore::new(pool.clone());
+
+    let (_, uow) = match store
+        .begin("test", &WorkflowId::new("uk-wf-1"), Some("listing-42"))
+        .await?
+    {
+        BeginResult::Active { events, uow, .. } => (events, uow),
+        BeginResult::Completed => anyhow::bail!("expected Active"),
+    };
+    uow.commit().await?;
+
+    let Err(err) = store
+        .begin("test", &WorkflowId::new("uk-wf-2"), Some("listing-42"))
+        .await
+    else {
+        anyhow::bail!("expected UniqueKeyConflict error, got Ok");
+    };
+
+    assert!(
+        matches!(
+            err,
+            Error::UniqueKeyConflict {
+                ref workflow_type,
+                ref unique_key,
+            } if workflow_type == "test" && unique_key == "listing-42"
+        ),
+        "expected UniqueKeyConflict, got: {err:?}"
+    );
+    Ok(())
+});
+
+db_test!(unique_key_different_workflow_types_are_isolated, |pool| {
+    let store = PgStore::new(pool.clone());
+
+    let (_, uow) = match store
+        .begin("type_a", &WorkflowId::new("uk-iso-1"), Some("shared-key"))
+        .await?
+    {
+        BeginResult::Active { events, uow, .. } => (events, uow),
+        BeginResult::Completed => anyhow::bail!("expected Active"),
+    };
+    uow.commit().await?;
+
+    let (_, uow) = match store
+        .begin("type_b", &WorkflowId::new("uk-iso-2"), Some("shared-key"))
+        .await?
+    {
+        BeginResult::Active { events, uow, .. } => (events, uow),
+        BeginResult::Completed => anyhow::bail!("expected Active"),
+    };
+    uow.commit().await?;
+
+    Ok(())
+});
+
+db_test!(unique_key_released_after_workflow_completes, |pool| {
+    let store = PgStore::new(pool.clone());
+
+    let (_, mut uow) = match store
+        .begin("test", &WorkflowId::new("uk-done-1"), Some("order-99"))
+        .await?
+    {
+        BeginResult::Active { events, uow, .. } => (events, uow),
+        BeginResult::Completed => anyhow::bail!("expected Active"),
+    };
+    uow.append_events([TestEvent::A]).await?;
+    uow.mark_completed();
+    uow.commit().await?;
+
+    let result = store
+        .begin("test", &WorkflowId::new("uk-done-2"), Some("order-99"))
+        .await;
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), BeginResult::Active { .. }));
+
+    Ok(())
+});
+
+db_test!(unique_key_idempotent_reexecution_succeeds, |pool| {
+    let store = PgStore::new(pool.clone());
+
+    let (_, mut uow) = match store
+        .begin("test", &WorkflowId::new("uk-idem-1"), Some("order-7"))
+        .await?
+    {
+        BeginResult::Active { events, uow, .. } => (events, uow),
+        BeginResult::Completed => anyhow::bail!("expected Active"),
+    };
+    uow.append_events([TestEvent::A]).await?;
+    uow.commit().await?;
+
+    let result = store
+        .begin("test", &WorkflowId::new("uk-idem-1"), Some("order-7"))
+        .await?;
+    match result {
+        BeginResult::Active { events, .. } => {
+            assert_eq!(events.len(), 1, "should see the previously committed event");
+        }
+        BeginResult::Completed => anyhow::bail!("expected Active"),
+    }
+
+    Ok(())
+});
+
+db_test!(unique_key_concurrent_conflict_one_wins_one_loses, |pool| {
+    let store = PgStore::new(pool.clone());
+
+    let (lock_acquired_tx, lock_acquired_rx) = tokio::sync::oneshot::channel::<()>();
+    let (can_commit_tx, can_commit_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let store1 = store.clone();
+    let task1 = tokio::spawn(async move {
+        let BeginResult::Active { mut uow, .. } = store1
+            .begin("test", &WorkflowId::new("uk-race-1"), Some("race-key"))
+            .await
+            .expect("task1 begin should succeed")
+        else {
+            anyhow::bail!("expected Active");
+        };
+        lock_acquired_tx
+            .send(())
+            .expect("receiver should not be dropped");
+        uow.append_events([TestEvent::A]).await.expect("append ok");
+        can_commit_rx.await.expect("sender should not be dropped");
+        uow.commit().await.expect("commit ok");
+        Ok::<_, anyhow::Error>(())
+    });
+
+    lock_acquired_rx
+        .await
+        .expect("task1 should signal lock acquired");
+
+    can_commit_tx.send(()).expect("task1 still alive");
+    task1.await.expect("task1 should complete")?;
+
+    let Err(err) = store
+        .begin("test", &WorkflowId::new("uk-race-2"), Some("race-key"))
+        .await
+    else {
+        anyhow::bail!("expected UniqueKeyConflict error, got Ok");
+    };
+
+    assert!(
+        matches!(err, Error::UniqueKeyConflict { .. }),
+        "expected UniqueKeyConflict, got: {err:?}"
     );
 
     Ok(())

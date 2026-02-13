@@ -102,11 +102,16 @@ pub trait Store: Send + Sync + Clone + 'static {
     /// 3. Loads all existing events for replay
     /// 4. Returns a unit of work for appending new events/effects
     ///
+    /// If `unique_key` is `Some`, the store enforces that only one active
+    /// (non-completed) workflow of this type can exist with that key. A
+    /// duplicate will return [`Error::UniqueKeyConflict`](crate::Error::UniqueKeyConflict).
+    ///
     /// The lock is held until the unit of work is committed or dropped.
     fn begin<'a>(
         &'a self,
         workflow_type: &'static str,
         workflow_id: &WorkflowId,
+        unique_key: Option<&str>,
     ) -> impl Future<Output = Result<BeginResult<Self::UnitOfWork<'a>>>> + Send;
 }
 

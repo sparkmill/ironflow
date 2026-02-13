@@ -39,8 +39,12 @@ where
     S: Store,
 {
     let workflow_id = input.workflow_id();
+    let unique_key = W::unique_key(input);
 
-    let (event_payloads, mut uow) = match store.begin(W::TYPE, &workflow_id).await? {
+    let (event_payloads, mut uow) = match store
+        .begin(W::TYPE, &workflow_id, unique_key.as_deref())
+        .await?
+    {
         BeginResult::Active { events, uow, .. } => (events, uow),
         BeginResult::Completed => {
             // Workflow already completed - silently succeed (idempotent)

@@ -13,7 +13,8 @@ pub async fn seed_events<E: Serialize + Send>(
     workflow_id: &WorkflowId,
     events: Vec<E>,
 ) -> Result<()> {
-    let BeginResult::Active { mut uow, .. } = store.begin(workflow_type, workflow_id).await? else {
+    let BeginResult::Active { mut uow, .. } = store.begin(workflow_type, workflow_id, None).await?
+    else {
         return Ok(());
     };
 
