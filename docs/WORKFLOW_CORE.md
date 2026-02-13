@@ -123,3 +123,6 @@ impl Workflow for CounterWorkflow {
 - **Terminal workflows:** completed instances silently skip new inputs.
 - **Effect ordering:** effects are not ordered; sequence via state + events.
 - **Serialization:** inputs/events/effects must be stable for replay.
+- **Unique key without terminal state:** if you implement `unique_key()` but not
+  `is_terminal()`, the workflow never completes and the key is held forever.
+  Always pair the two.

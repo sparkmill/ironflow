@@ -49,6 +49,21 @@ pub enum Error {
     /// Workflow type was registered more than once.
     #[error("duplicate workflow type registration: {0}")]
     DuplicateWorkflowType(String),
+
+    /// Another active workflow with the same unique key already exists.
+    ///
+    /// This error is returned when a workflow tries to start with a
+    /// [`unique_key`](crate::Workflow::unique_key) that is already held
+    /// by an active (non-completed) workflow of the same type.
+    #[error(
+        "unique key conflict: workflow type '{workflow_type}' already has an active instance with key '{unique_key}'"
+    )]
+    UniqueKeyConflict {
+        /// The workflow type identifier.
+        workflow_type: String,
+        /// The conflicting unique key.
+        unique_key: String,
+    },
 }
 
 impl Error {

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ironflow.workflow_instances (workflow_type, workflow_id, unique_key)\n               VALUES ($1, $2, $3)\n               ON CONFLICT (workflow_type, workflow_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cb603296306a7b269d1337b0827b68d68d4f04b4048167913b808db9d194d113"
+}

@@ -599,7 +599,7 @@ db_test!(timer_key_scoped_to_workflow_instance, |pool| {
 
     // Schedule timers with same key but different workflow instances
     let BeginResult::Active { mut uow, .. } = store
-        .begin("test", &WorkflowId::new("timer-scope-a"))
+        .begin("test", &WorkflowId::new("timer-scope-a"), None)
         .await?
     else {
         anyhow::bail!("expected Active");
@@ -613,7 +613,7 @@ db_test!(timer_key_scoped_to_workflow_instance, |pool| {
     uow.commit().await?;
 
     let BeginResult::Active { mut uow, .. } = store
-        .begin("test", &WorkflowId::new("timer-scope-b"))
+        .begin("test", &WorkflowId::new("timer-scope-b"), None)
         .await?
     else {
         anyhow::bail!("expected Active");

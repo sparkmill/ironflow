@@ -65,6 +65,19 @@ A workflow type defines:
 
 Workflow instances are identified by `(workflow_type, workflow_id)`.
 
+### Unique Key Constraint (Optional)
+
+Workflows can opt into at-most-one-active-workflow semantics per external
+business key by implementing `Workflow::unique_key()`. This returns an optional
+key derived from the input (e.g., `"order-42"`). A PostgreSQL partial unique
+index on `(workflow_type, unique_key) WHERE completed_at IS NULL` enforces the
+constraint with zero race window. Attempts to start a second active workflow
+with the same key return `Error::UniqueKeyConflict`.
+
+Workflows using `unique_key()` must also implement `is_terminal()` so that
+completed workflows release their key. See [UNIQUE_KEY.md](./UNIQUE_KEY.md)
+for full design and usage examples.
+
 ### Decision
 
 `decide()` returns a Decision that always contains at least one event.
@@ -182,6 +195,7 @@ This is the same service described in "Service + Runtime Split (Target)".
 The service returns `Result<()>`:
 
 - `Ok(())`: Input was processed, or silently skipped if workflow was completed
+- `Err(UniqueKeyConflict)`: Another active workflow of the same type already holds this unique key
 - `Err`: Infrastructure failure (storage, serialization, locking)
 
 **Business outcomes are events, not return values.** If an input is rejected
@@ -285,6 +299,7 @@ but the primary implementation target is SQLx/Postgres in the first phase.
 - workflow_instances
   - row-level lock per (workflow_type, workflow_id)
   - completed_at marker
+  - optional unique_key with partial unique index for at-most-one-active constraint
 
 - events
   - append-only event stream per instance
@@ -371,15 +386,16 @@ Key properties:
 
 ### Guarantees Provided
 
-| Guarantee                              | Status         | Mechanism                                           |
-| -------------------------------------- | -------------- | --------------------------------------------------- |
-| **Same-instance serialization**        | ✅ Guaranteed  | `SELECT ... FOR UPDATE` on `workflow_instances` row |
-| **Different-instance parallelism**     | ✅ Guaranteed  | Different rows, independent locks                   |
-| **Effect at-least-once delivery**      | ✅ Guaranteed  | Outbox pattern + retry on failure                   |
-| **Timer at-least-once delivery**       | ✅ Guaranteed  | Timer table + retry on failure                      |
-| **No duplicate concurrent processing** | ✅ Guaranteed  | `FOR UPDATE SKIP LOCKED` coordination               |
-| **Worker crash recovery**              | ✅ Guaranteed  | Lock expiry (`locked_until`) releases stale claims  |
-| **Graceful shutdown**                  | ✅ Best-effort | Shutdown signal + timeout                           |
+| Guarantee                              | Status         | Mechanism                                             |
+| -------------------------------------- | -------------- | ----------------------------------------------------- |
+| **Same-instance serialization**        | ✅ Guaranteed  | `SELECT ... FOR UPDATE` on `workflow_instances` row   |
+| **Different-instance parallelism**     | ✅ Guaranteed  | Different rows, independent locks                     |
+| **Effect at-least-once delivery**      | ✅ Guaranteed  | Outbox pattern + retry on failure                     |
+| **Timer at-least-once delivery**       | ✅ Guaranteed  | Timer table + retry on failure                        |
+| **No duplicate concurrent processing** | ✅ Guaranteed  | `FOR UPDATE SKIP LOCKED` coordination                 |
+| **Worker crash recovery**              | ✅ Guaranteed  | Lock expiry (`locked_until`) releases stale claims    |
+| **Graceful shutdown**                  | ✅ Best-effort | Shutdown signal + timeout                             |
+| **At-most-one-active per unique key**  | ✅ Guaranteed  | Partial unique index on `(workflow_type, unique_key)` |
 
 ### Guarantees NOT Provided
 
