@@ -75,8 +75,7 @@ constraint with zero race window. Attempts to start a second active workflow
 with the same key return `Error::UniqueKeyConflict`.
 
 Workflows using `unique_key()` must also implement `is_terminal()` so that
-completed workflows release their key. See [UNIQUE_KEY.md](./UNIQUE_KEY.md)
-for full design and usage examples.
+completed workflows release their key.
 
 ### Decision
 

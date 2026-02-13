@@ -202,8 +202,6 @@ match service.execute::<PaymentWorkflow>(&input).await {
 - Once the workflow completes, the key is released and a new workflow can start.
 - `is_terminal()` **must** be implemented; otherwise the key is held forever.
 
-See [UNIQUE_KEY.md](./UNIQUE_KEY.md) for full design details.
-
 ---
 
 ## Workflows Without Effects
