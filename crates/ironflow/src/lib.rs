@@ -85,12 +85,12 @@ pub use error::{Error, Result};
 pub use nonempty::NonEmpty;
 pub use projection::{Projection, ProjectionConfig, ProjectionEvent, ProjectionWorker};
 pub use runtime::{RuntimeConfig, WorkflowBuilder, WorkflowRuntime};
-pub use service::{WorkflowService, WorkflowServiceConfig};
+pub use service::{ExecuteOutcome, WorkflowService, WorkflowServiceConfig};
 #[cfg(feature = "postgres")]
 pub use store::PgStore;
 pub use store::{
-    BeginResult, DeadLetter, DeadLetterQuery, EventStore, InputObservation, OutboxStore,
-    ProjectionStore, Store, StoredEvent,
+    BeginResult, DeadLetter, DeadLetterQuery, EventStore, InputObservation, ObservationOutcome,
+    OutboxStore, ProjectionStore, Store, StoredEvent,
 };
 pub use timer::Timer;
 pub use visualization::{

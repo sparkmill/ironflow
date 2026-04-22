@@ -29,7 +29,7 @@ panic = "abort"    # Faster panics, smaller binary, immediate container restart 
 ironflow-macros = { version = "0.1", path = "crates/ironflow-macros" }
 
 # Async runtime
-tokio = { version = "1.49", default-features = false, features = [
+tokio = { version = "1.52", default-features = false, features = [
   "macros",
   "rt-multi-thread",
   "signal",
@@ -60,7 +60,7 @@ sqlx = { version = "0.8", default-features = false, features = [
   "json",
 ] }
 url = "2.5"
-uuid = { version = "1.20", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
 nonempty = { version = "0.12", features = ["std", "serialize"] }
 
 # Date and time

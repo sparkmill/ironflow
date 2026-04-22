@@ -208,6 +208,7 @@ mod tests {
         type Input = NoopInput;
         type Event = NoopEvent;
         type Effect = NoopEffect;
+        type Rejection = std::borrow::Cow<'static, str>;
 
         const TYPE: &'static str = "noop";
 
@@ -219,8 +220,8 @@ mod tests {
             _now: time::OffsetDateTime,
             _state: &Self::State,
             _input: &Self::Input,
-        ) -> crate::Decision<Self::Event, Self::Effect, Self::Input> {
-            crate::Decision::event(NoopEvent)
+        ) -> crate::Decision<Self::Event, Self::Effect, Self::Input, Self::Rejection> {
+            crate::Decision::accept(NoopEvent)
         }
     }
 

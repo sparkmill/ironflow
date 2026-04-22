@@ -80,6 +80,42 @@ db_test!(builder_rejects_duplicate_registration, |pool| {
     Ok(())
 });
 
+db_test!(register_populates_both_dispatch_paths, |pool| {
+    // A single .register(handler) call must populate BOTH the string-keyed
+    // dynamic registry and the TypeId-keyed typed registry. If either map
+    // were skipped, one of the execute paths below would return
+    // Error::UnknownWorkflowType (propagated through the `?`), and the
+    // test would fail before the matches! check. This guards against a
+    // future PR that modifies registration and forgets one of the two
+    // inserts.
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+
+    // Typed path routes through WorkflowRegistry::get_typed (TypeId-keyed).
+    let typed = service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("dual-path-typed"))
+        .await?;
+    assert!(
+        matches!(typed, ironflow::ExecuteOutcome::Accepted { .. }),
+        "typed path should dispatch after registration, got {typed:?}"
+    );
+
+    // Dynamic path routes through WorkflowRegistry::get (string-keyed).
+    let dynamic_input = serde_json::json!({
+        "type": "Ping",
+        "id": "dual-path-dynamic",
+    });
+    let dynamic = service
+        .execute_dynamic(TestWorkflow::TYPE, &dynamic_input)
+        .await?;
+    assert!(
+        matches!(dynamic, ironflow::ExecuteOutcome::Accepted { .. }),
+        "dynamic path should dispatch after registration, got {dynamic:?}"
+    );
+
+    Ok(())
+});
+
 db_test!(builder_register_without_effects, |pool| {
     use crate::support::workflows::test_workflow::{EffectlessInput, EffectlessWorkflow};
 
@@ -349,5 +385,230 @@ db_test!(fetch_latest_state_returns_json, |pool| {
         .await?;
 
     assert_eq!(state["counter"].as_i64(), Some(2));
+    Ok(())
+});
+
+// =============================================================================
+// Outcome / rejection tests
+// =============================================================================
+
+db_test!(execute_returns_accepted_with_event_count, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+
+    let outcome = service
+        .execute::<TestWorkflow>(&TestWorkflowInput::increment_with_effect("accept-1"))
+        .await?;
+
+    assert!(
+        matches!(
+            outcome,
+            ironflow::ExecuteOutcome::Accepted { events_appended: 1 }
+        ),
+        "expected Accepted {{ events_appended: 1 }}, got {outcome:?}"
+    );
+    Ok(())
+});
+
+db_test!(execute_returns_rejected_with_typed_reason, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+
+    // Bootstrap then reject a subsequent input
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("reject-1"))
+        .await?;
+
+    let outcome = service
+        .execute::<TestWorkflow>(&TestWorkflowInput::force_reject(
+            "reject-1",
+            "validation failed",
+        ))
+        .await?;
+
+    match outcome {
+        ironflow::ExecuteOutcome::Rejected(reason) => {
+            assert_eq!(reason, std::borrow::Cow::Borrowed("validation failed"));
+        }
+        other => panic!("expected Rejected, got {other:?}"),
+    }
+    Ok(())
+});
+
+db_test!(rejected_input_does_not_append_events, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("no-events-1"))
+        .await?;
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::force_reject("no-events-1", "nope"))
+        .await?;
+
+    let events = fetch_events(pool, TestWorkflow::TYPE, "no-events-1").await?;
+    // Only the Ping event; the rejected input did not append anything
+    assert_event_types(&events, &["Pinged"]);
+    Ok(())
+});
+
+db_test!(rejected_bootstrap_rolls_back_instance_row, |pool| {
+    // Reject the very first input → no workflow_instances row should remain.
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+
+    let outcome = service
+        .execute::<TestWorkflow>(&TestWorkflowInput::force_reject(
+            "bootstrap-reject-1",
+            "not allowed",
+        ))
+        .await?;
+
+    assert!(matches!(outcome, ironflow::ExecuteOutcome::Rejected(_)));
+
+    let instance_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM ironflow.workflow_instances
+         WHERE workflow_type = $1 AND workflow_id = $2",
+        TestWorkflow::TYPE,
+        "bootstrap-reject-1",
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
+
+    assert_eq!(
+        instance_count, 0,
+        "rejected bootstrap should leave no workflow_instances row"
+    );
+    Ok(())
+});
+
+db_test!(rejection_persisted_when_observations_enabled, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, true);
+
+    // Bootstrap first so the workflow exists
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("obs-reject-1"))
+        .await?;
+
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::force_reject("obs-reject-1", "boom"))
+        .await?;
+
+    let row = sqlx::query!(
+        r#"SELECT outcome, rejection_payload
+           FROM ironflow.input_observations
+           WHERE workflow_id = $1 AND outcome = 'rejected'"#,
+        "obs-reject-1",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    assert_eq!(row.outcome, "rejected");
+    assert_eq!(row.rejection_payload.unwrap(), serde_json::json!("boom"));
+    Ok(())
+});
+
+db_test!(rejection_not_persisted_when_observations_disabled, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("obs-off-1"))
+        .await?;
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::force_reject("obs-off-1", "quiet"))
+        .await?;
+
+    let count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM ironflow.input_observations WHERE workflow_id = $1",
+        "obs-off-1",
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
+
+    assert_eq!(count, 0, "no observations expected when flag is off");
+    Ok(())
+});
+
+db_test!(
+    execute_returns_already_completed_for_terminal_workflow,
+    |pool| {
+        let store = PgStore::new(pool.clone());
+        let service = build_service(store, false);
+
+        service
+            .execute::<TestWorkflow>(&TestWorkflowInput::ping("done-1"))
+            .await?;
+        service
+            .execute::<TestWorkflow>(&TestWorkflowInput::stop("done-1"))
+            .await?;
+
+        let outcome = service
+            .execute::<TestWorkflow>(&TestWorkflowInput::ping("done-1"))
+            .await?;
+
+        assert!(
+            matches!(outcome, ironflow::ExecuteOutcome::AlreadyCompleted),
+            "expected AlreadyCompleted, got {outcome:?}"
+        );
+        Ok(())
+    }
+);
+
+db_test!(
+    already_completed_persisted_when_observations_enabled,
+    |pool| {
+        let store = PgStore::new(pool.clone());
+        let service = build_service(store, true);
+
+        service
+            .execute::<TestWorkflow>(&TestWorkflowInput::ping("ac-obs-1"))
+            .await?;
+        service
+            .execute::<TestWorkflow>(&TestWorkflowInput::stop("ac-obs-1"))
+            .await?;
+        service
+            .execute::<TestWorkflow>(&TestWorkflowInput::ping("ac-obs-1"))
+            .await?;
+
+        let row = sqlx::query!(
+            r#"SELECT outcome
+           FROM ironflow.input_observations
+           WHERE workflow_id = $1 AND outcome = 'already_completed'"#,
+            "ac-obs-1",
+        )
+        .fetch_one(pool)
+        .await?;
+
+        assert_eq!(row.outcome, "already_completed");
+        Ok(())
+    }
+);
+
+db_test!(execute_dynamic_returns_json_rejection, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+
+    // Bootstrap
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::ping("dyn-reject-1"))
+        .await?;
+
+    let input = serde_json::json!({
+        "type": "ForceReject",
+        "id": "dyn-reject-1",
+        "reason": "from-dynamic",
+    });
+    let outcome = service.execute_dynamic(TestWorkflow::TYPE, &input).await?;
+
+    match outcome {
+        ironflow::ExecuteOutcome::Rejected(payload) => {
+            assert_eq!(payload, serde_json::json!("from-dynamic"));
+        }
+        other => panic!("expected Rejected, got {other:?}"),
+    }
     Ok(())
 });

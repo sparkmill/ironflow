@@ -5,6 +5,8 @@
 //! - Cancelling timers before they fire
 //! - Timer-triggered inputs
 
+use std::borrow::Cow;
+
 use async_trait::async_trait;
 use ironflow::{Decision, EffectContext, EffectHandler, HasWorkflowId, NonEmpty, Timer, Workflow};
 use serde::{Deserialize, Serialize};
@@ -62,6 +64,7 @@ impl Workflow for TimerTestWorkflow {
     type Input = TimerTestInput;
     type Event = TimerTestEvent;
     type Effect = TimerTestEffect;
+    type Rejection = Cow<'static, str>;
 
     const TYPE: &'static str = "timer_test";
 
@@ -79,7 +82,7 @@ impl Workflow for TimerTestWorkflow {
         _now: OffsetDateTime,
         _state: &Self::State,
         input: &Self::Input,
-    ) -> Decision<Self::Event, Self::Effect, Self::Input> {
+    ) -> Decision<Self::Event, Self::Effect, Self::Input, Self::Rejection> {
         match input {
             TimerTestInput::Start {
                 id,
@@ -93,7 +96,7 @@ impl Workflow for TimerTestWorkflow {
                 if let Some(key) = timer_key {
                     timer = timer.with_key(key);
                 }
-                Decision::event(TimerTestEvent::Started)
+                Decision::accept(TimerTestEvent::Started)
                     .with_effect(TimerTestEffect::Process)
                     .with_timer(timer)
             }
@@ -106,12 +109,12 @@ impl Workflow for TimerTestWorkflow {
                         TimerTestEvent::TimerCancelled { key: key.clone() },
                     ])
                     .expect("non-empty");
-                    Decision::from_events(events).cancel_timer(key)
+                    Decision::accept_events(events).cancel_timer(key)
                 } else {
-                    Decision::event(TimerTestEvent::Completed)
+                    Decision::accept(TimerTestEvent::Completed)
                 }
             }
-            TimerTestInput::Timeout { .. } => Decision::event(TimerTestEvent::TimedOut),
+            TimerTestInput::Timeout { .. } => Decision::accept(TimerTestEvent::TimedOut),
         }
     }
 }

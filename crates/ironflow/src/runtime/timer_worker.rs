@@ -117,16 +117,38 @@ where
         let attempts = timer.attempts;
         let input = timer.payload;
 
-        // Execute the input as a new decision
+        // Execute the input as a new decision. Accepted / Rejected /
+        // AlreadyCompleted all mean "decide ran (or was deliberately skipped)"
+        // and the timer has done its job. Only framework errors retry.
         match self
             .runtime
             .service()
             .execute_dynamic(timer.workflow.workflow_type(), &input)
             .await
         {
-            Ok(_) => {
-                // Timer processed (either executed or skipped if workflow completed)
-                self.outbox.mark_timer_processed(timer_id).await?;
+            Ok(outcome) => {
+                match outcome {
+                    crate::ExecuteOutcome::Rejected(ref payload) => {
+                        debug!(
+                            timer_id = %timer_id,
+                            rejection = ?payload,
+                            "Timer input rejected by workflow"
+                        );
+                    }
+                    crate::ExecuteOutcome::AlreadyCompleted => {
+                        debug!(
+                            timer_id = %timer_id,
+                            "Timer input dropped — workflow already completed"
+                        );
+                    }
+                    crate::ExecuteOutcome::Accepted { .. } => {}
+                }
+                // If decide rescheduled this timer's key, the upsert cleared
+                // locked_by so this call is a no-op and the rescheduled row stays
+                // alive for its new fire_at.
+                self.outbox
+                    .mark_timer_processed(timer_id, &self.worker_id)
+                    .await?;
                 debug!(timer_id = %timer_id, "Timer processed successfully");
             }
             Err(e) => {
@@ -134,7 +156,7 @@ where
                 warn!(timer_id = %timer_id, error = %error_msg, "Timer execution failed");
                 let backoff = self.config.retry_policy.backoff_duration(attempts + 1);
                 self.outbox
-                    .record_timer_failure(timer_id, &error_msg, backoff)
+                    .record_timer_failure(timer_id, &self.worker_id, &error_msg, backoff)
                     .await?;
             }
         }

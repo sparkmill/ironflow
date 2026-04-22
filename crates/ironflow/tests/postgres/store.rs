@@ -72,14 +72,14 @@ enum TestTimerInput {
 
 fn build_test_timer(
     order_id: &str,
-    fire_at: time::OffsetDateTime,
+    delay: Duration,
     key: Option<&str>,
 ) -> Timer<serde_json::Value> {
     let input = serde_json::to_value(TestTimerInput::Timeout {
         order_id: order_id.into(),
     })
     .expect("TestTimerInput should serialize");
-    let timer = Timer::at(fire_at, input);
+    let timer = Timer::after(delay, input);
     match key {
         Some(k) => timer.with_key(k),
         None => timer,
@@ -229,8 +229,8 @@ db_test!(schedule_timers_persists_to_timers_table, |pool| {
     let store = PgStore::new(pool.clone());
 
     let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("id-1")).await?;
-    let fire_at = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
-    uow.schedule_timers([build_test_timer("123", fire_at, None)])
+    let before = time::OffsetDateTime::now_utc();
+    uow.schedule_timers([build_test_timer("123", Duration::from_secs(3600), None)])
         .await?;
     uow.commit().await?;
 
@@ -243,7 +243,8 @@ db_test!(schedule_timers_persists_to_timers_table, |pool| {
 
     assert_eq!(row.workflow_type, "test");
     assert_eq!(row.workflow_id, "id-1");
-    assert!(row.fire_at >= fire_at - time::Duration::seconds(1)); // timing tolerance
+    // fire_at = db_now() + 1h; bounded roughly by app-observed `before` + 1h.
+    assert!(row.fire_at >= before + time::Duration::seconds(3599));
     assert_eq!(row.input["type"], "Timeout");
     assert_eq!(row.input["order_id"], "123");
     Ok(())
@@ -253,16 +254,22 @@ db_test!(schedule_timer_with_key_replaces_existing, |pool| {
     let store = PgStore::new(pool.clone());
 
     let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("id-1")).await?;
-    let fire_at_1 = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
-    uow.schedule_timers([build_test_timer("v1", fire_at_1, Some("payment-timeout"))])
-        .await?;
+    uow.schedule_timers([build_test_timer(
+        "v1",
+        Duration::from_secs(3600),
+        Some("payment-timeout"),
+    )])
+    .await?;
     uow.commit().await?;
 
     // Same key should replace, not add
     let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("id-1")).await?;
-    let fire_at_2 = time::OffsetDateTime::now_utc() + time::Duration::hours(2);
-    uow.schedule_timers([build_test_timer("v2", fire_at_2, Some("payment-timeout"))])
-        .await?;
+    uow.schedule_timers([build_test_timer(
+        "v2",
+        Duration::from_secs(7200),
+        Some("payment-timeout"),
+    )])
+    .await?;
     uow.commit().await?;
 
     let count = count_timers(pool, "test", "id-1", false, None).await?;
@@ -273,14 +280,158 @@ db_test!(schedule_timer_with_key_replaces_existing, |pool| {
     Ok(())
 });
 
+db_test!(schedule_timer_with_key_resets_retry_state, |pool| {
+    // Rescheduling a keyed timer should replace the existing timer with a fresh
+    // one. Callers expect a rescheduled timer to start from attempts = 0 with no
+    // locked_until or last_error carried over from the previous failed run.
+    let store = PgStore::new(pool.clone());
+
+    let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("id-1")).await?;
+    uow.schedule_timers([build_test_timer(
+        "v1",
+        Duration::from_secs(3600),
+        Some("retry-key"),
+    )])
+    .await?;
+    uow.commit().await?;
+
+    // Simulate the timer firing, failing, and backing off a few times.
+    let future_lock = time::OffsetDateTime::now_utc() + time::Duration::minutes(5);
+    sqlx::query!(
+        r#"
+        UPDATE ironflow.timers
+        SET attempts = 2,
+            last_error = 'transient failure',
+            locked_until = $3,
+            locked_by = 'worker-crashed'
+        WHERE workflow_type = $1 AND workflow_id = $2
+        "#,
+        "test",
+        "id-1",
+        future_lock,
+    )
+    .execute(pool)
+    .await?;
+
+    // Reschedule with the same key — caller's intent is a fresh timer.
+    let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("id-1")).await?;
+    uow.schedule_timers([build_test_timer(
+        "v2",
+        Duration::from_secs(7200),
+        Some("retry-key"),
+    )])
+    .await?;
+    uow.commit().await?;
+
+    let row = sqlx::query!(
+        r#"
+        SELECT attempts, last_error, locked_until, locked_by
+        FROM ironflow.timers
+        WHERE workflow_type = $1 AND workflow_id = $2
+        "#,
+        "test",
+        "id-1",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    assert_eq!(row.attempts, 0, "attempts should reset on reschedule");
+    assert!(
+        row.last_error.is_none(),
+        "last_error should clear on reschedule, got {:?}",
+        row.last_error
+    );
+    assert!(
+        row.locked_until.is_none(),
+        "locked_until should clear on reschedule, got {:?}",
+        row.locked_until
+    );
+    assert!(
+        row.locked_by.is_none(),
+        "locked_by should clear on reschedule, got {:?}",
+        row.locked_by
+    );
+
+    Ok(())
+});
+
+db_test!(mark_timer_processed_skips_rescheduled_timer, |pool| {
+    // A worker claims a timer, runs decide, decide reschedules the same key, then
+    // the worker calls mark_timer_processed. Because the upsert cleared locked_by,
+    // the worker should no longer "own" the claim and the mark should not clobber
+    // the rescheduled timer. Without this guard, self-rescheduling timers (e.g.
+    // heartbeat/keep-alive patterns) get silently killed on every fire.
+    let store = PgStore::new(pool.clone());
+
+    // Seed a past-fire-at keyed timer directly — the Timer::after API only
+    // takes a positive Duration, so we bypass it to get an immediately
+    // claimable seed.
+    sqlx::query!(
+        r#"
+        INSERT INTO ironflow.timers (workflow_type, workflow_id, fire_at, input, key)
+        VALUES ($1, $2, now() - interval '5 seconds', $3, $4)
+        "#,
+        "test",
+        "ts-1",
+        serde_json::json!({"type": "Timeout", "order_id": "v1"}),
+        "renew",
+    )
+    .execute(pool)
+    .await?;
+
+    let claimed = store
+        .claim_timer("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .await?
+        .expect("due timer should be claimable");
+    let claimed_id = claimed.id;
+
+    // decide reschedules the same key while the worker still holds the claim
+    let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("ts-1")).await?;
+    uow.schedule_timers([build_test_timer(
+        "v2",
+        Duration::from_secs(3600),
+        Some("renew"),
+    )])
+    .await?;
+    uow.commit().await?;
+
+    store.mark_timer_processed(claimed_id, "worker-1").await?;
+
+    let row = sqlx::query!(
+        r#"
+        SELECT processed_at, fire_at, attempts
+        FROM ironflow.timers
+        WHERE id = $1
+        "#,
+        claimed_id,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    assert!(
+        row.processed_at.is_none(),
+        "rescheduled timer should stay active, but processed_at = {:?}",
+        row.processed_at
+    );
+    assert!(
+        row.fire_at > time::OffsetDateTime::now_utc(),
+        "rescheduled fire_at should be in the future"
+    );
+    assert_eq!(
+        row.attempts, 0,
+        "rescheduled timer should have reset attempts"
+    );
+
+    Ok(())
+});
+
 db_test!(cancel_timers_by_key, |pool| {
     let store = PgStore::new(pool.clone());
 
     let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("id-1")).await?;
-    let fire_at = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
     uow.schedule_timers([build_test_timer(
         "cancel-1",
-        fire_at,
+        Duration::from_secs(3600),
         Some("payment-timeout"),
     )])
     .await?;
@@ -305,6 +456,7 @@ db_test!(record_input_observation_persists, |pool| {
         workflow_id: WorkflowId::new("id-1"),
         input_type: "TestInput".into(),
         payload: serde_json::json!({ "type": "TestInput", "value": 42 }),
+        outcome: ironflow::ObservationOutcome::Accepted,
     };
     uow.record_input_observation(observation).await?;
     uow.commit().await?;
@@ -817,7 +969,7 @@ db_test!(mark_timer_processed_removes_from_queue, |pool| {
         .await?
         .unwrap();
 
-    store.mark_timer_processed(timer.id).await?;
+    store.mark_timer_processed(timer.id, "worker-1").await?;
 
     let next = store
         .claim_timer("worker-2", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
@@ -852,7 +1004,12 @@ db_test!(record_timer_failure_increments_attempts, |pool| {
         .unwrap();
 
     store
-        .record_timer_failure(timer.id, "workflow locked", Duration::from_secs(1))
+        .record_timer_failure(
+            timer.id,
+            "worker-1",
+            "workflow locked",
+            Duration::from_secs(1),
+        )
         .await?;
 
     let row = sqlx::query!(
@@ -863,6 +1020,68 @@ db_test!(record_timer_failure_increments_attempts, |pool| {
     .await?;
     assert_eq!(row.attempts, 1);
     assert_eq!(row.last_error.as_deref(), Some("workflow locked"));
+
+    Ok(())
+});
+
+db_test!(record_timer_failure_skips_stale_claim, |pool| {
+    // Race scenario: Worker A claims a timer, takes longer to process than
+    // its lock_duration allows. At lock expiry Worker B re-claims the timer
+    // and starts its own processing. Worker A's decide eventually fails and
+    // calls record_timer_failure. Without a locked_by guard, A would clobber
+    // B's claim (clearing locked_by), causing B's subsequent
+    // mark_timer_processed to silently fail — the timer stays active and
+    // gets processed a third time by whoever claims it next.
+    let store = PgStore::new(pool.clone());
+
+    insert_due_timer(
+        pool,
+        "test",
+        "stale-claim-1",
+        serde_json::json!({"type": "Timeout", "order_id": "race"}),
+    )
+    .await?;
+
+    let timer = store
+        .claim_timer("worker-A", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .await?
+        .unwrap();
+
+    // Simulate another worker re-claiming after A's lock expired.
+    sqlx::query!(
+        "UPDATE ironflow.timers SET locked_by = 'worker-B' WHERE id = $1",
+        timer.id,
+    )
+    .execute(pool)
+    .await?;
+
+    // Worker A's stale call — must be a no-op.
+    store
+        .record_timer_failure(timer.id, "worker-A", "stale", Duration::from_secs(60))
+        .await?;
+
+    let row = sqlx::query!(
+        "SELECT attempts, locked_by, last_error FROM ironflow.timers WHERE id = $1",
+        timer.id,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    assert_eq!(
+        row.attempts, 0,
+        "attempts must not increment on stale claim"
+    );
+    assert_eq!(
+        row.locked_by.as_deref(),
+        Some("worker-B"),
+        "B's claim must be preserved, got {:?}",
+        row.locked_by
+    );
+    assert!(
+        row.last_error.is_none(),
+        "last_error must not be overwritten, got {:?}",
+        row.last_error
+    );
 
     Ok(())
 });

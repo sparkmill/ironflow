@@ -56,19 +56,18 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 
-/// A scheduled timer that will deliver an input to the workflow at a future time.
+/// A scheduled timer that will deliver an input to the workflow after a
+/// delay. The actual fire time is computed DB-side as `now() + delay`
+/// when the timer is written, so this type doesn't need to read the
+/// wall clock and decide stays deterministic.
 ///
-/// Timers are created in `Workflow::decide()` and stored in a dedicated table.
-/// When the scheduled time arrives, the `TimerWorker` extracts the input and
-/// routes it to the workflow via `Decider::execute()`.
+/// # Timer keys
 ///
-/// # Timer Keys
-///
-/// Timers can optionally have a `key` for deduplication. If you schedule a timer
-/// with the same key for the same workflow instance, it replaces the existing timer.
-/// This is useful for "reschedule" semantics (e.g., extending a timeout).
+/// Timers can optionally have a `key` for deduplication. Scheduling a
+/// timer with the same key for the same workflow instance replaces the
+/// existing one — useful for "reschedule" semantics like extending a
+/// timeout.
 ///
 /// # Example
 ///
@@ -76,70 +75,33 @@ use time::OffsetDateTime;
 /// use std::time::Duration;
 /// use ironflow::Timer;
 ///
-/// // Timer that fires in 1 hour
-/// let timer = Timer::after(Duration::from_secs(3600), "PaymentTimeout");
-///
-/// // Timer with a key for deduplication
-/// let timer = Timer::after(Duration::from_secs(3600), "PaymentTimeout")
+/// Timer::after(Duration::from_secs(3600), "PaymentTimeout")
 ///     .with_key("payment-timeout");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timer<I> {
-    /// When the timer should fire (UTC).
-    pub fire_at: OffsetDateTime,
+    /// How long after persist time the timer should fire.
+    pub delay: Duration,
 
     /// The input to deliver when the timer fires.
     pub input: I,
 
     /// Optional key for deduplication/replacement.
-    ///
-    /// If set, scheduling a timer with the same key for the same workflow
-    /// instance will replace any existing timer with that key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
 }
 
 impl<I> Timer<I> {
-    /// Create a timer that fires at a specific time.
-    ///
-    /// # Arguments
-    ///
-    /// * `fire_at` - When the timer should fire (UTC)
-    /// * `input` - The input to deliver when the timer fires
-    pub fn at(fire_at: OffsetDateTime, input: I) -> Self {
+    /// Create a timer that fires `delay` after it is persisted to the store.
+    pub fn after(delay: Duration, input: I) -> Self {
         Self {
-            fire_at,
+            delay,
             input,
             key: None,
         }
     }
 
-    /// Create a timer that fires after a delay from now.
-    ///
-    /// # Arguments
-    ///
-    /// * `delay` - How long to wait before firing
-    /// * `input` - The input to deliver when the timer fires
-    pub fn after(delay: Duration, input: I) -> Self {
-        let delay_time = time::Duration::new(delay.as_secs() as i64, delay.subsec_nanos() as i32);
-        Self::at(OffsetDateTime::now_utc() + delay_time, input)
-    }
-
     /// Set a key for deduplication/replacement.
-    ///
-    /// If a timer with this key already exists for the same workflow instance,
-    /// scheduling this timer will replace the existing one.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use std::time::Duration;
-    /// use ironflow::Timer;
-    ///
-    /// // If user extends their session, reschedule the timeout
-    /// let timer = Timer::after(Duration::from_secs(1800), "SessionTimeout")
-    ///     .with_key("session-timeout");
-    /// ```
     pub fn with_key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self
@@ -156,24 +118,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn timer_at() {
-        let fire_at = OffsetDateTime::now_utc() + time::Duration::hours(1);
-        let timer = Timer::at(fire_at, "TestInput");
+    fn timer_after_carries_delay_and_does_not_read_clock() {
+        // `after` must not read the wall clock — fire_at is computed
+        // DB-side as now() + delay at persist time. The constructor is
+        // a pure data carrier.
+        let delay = Duration::from_secs(3600);
+        let timer = Timer::after(delay, "TestInput");
 
-        assert_eq!(timer.fire_at, fire_at);
+        assert_eq!(timer.delay, delay);
         assert_eq!(timer.input, "TestInput");
         assert!(timer.key.is_none());
-    }
-
-    #[test]
-    fn timer_after() {
-        let before = OffsetDateTime::now_utc();
-        let timer = Timer::after(Duration::from_secs(3600), "TestInput");
-        let after = OffsetDateTime::now_utc();
-
-        // fire_at should be approximately 1 hour from now
-        assert!(timer.fire_at >= before + time::Duration::hours(1));
-        assert!(timer.fire_at <= after + time::Duration::hours(1));
     }
 
     #[test]
@@ -185,22 +139,11 @@ mod tests {
 
     #[test]
     fn timer_serialization() {
-        let timer = Timer::at(
-            OffsetDateTime::from_unix_timestamp(1704067200).unwrap(), // 2024-01-01 00:00:00 UTC
-            "TestInput",
-        );
-
-        let json = serde_json::to_value(&timer).unwrap();
-        assert!(json.get("fire_at").is_some());
-        assert_eq!(json["input"], "TestInput");
-        assert!(json.get("key").is_none()); // Skipped when None
-    }
-
-    #[test]
-    fn timer_serialization_with_key() {
         let timer = Timer::after(Duration::from_secs(60), "TestInput").with_key("my-key");
 
         let json = serde_json::to_value(&timer).unwrap();
+        assert!(json["delay"].is_object(), "serialized JSON: {json}");
+        assert_eq!(json["input"], "TestInput");
         assert_eq!(json["key"], "my-key");
     }
 }

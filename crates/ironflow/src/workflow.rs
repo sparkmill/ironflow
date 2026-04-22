@@ -37,40 +37,23 @@ use crate::Timer;
 ///     type Input = OrderInput;
 ///     type Event = OrderEvent;
 ///     type Effect = OrderEffect;
+///     type Rejection = OrderRejection;
 ///
 ///     const TYPE: &'static str = "order";
 ///
-///     fn evolve(mut state: Self::State, event: Self::Event) -> Self::State {
-///         match event {
-///             OrderEvent::Created { items } => {
-///                 state.items = items;
-///                 state.status = OrderStatus::Created;
-///             }
-///             OrderEvent::Shipped { tracking } => {
-///                 state.status = OrderStatus::Shipped { tracking };
-///             }
-///         }
-///         state
-///     }
+///     fn evolve(state: Self::State, event: Self::Event) -> Self::State { /* ... */ }
 ///
-///     fn decide(now: OffsetDateTime, state: &Self::State, input: &Self::Input)
-///         -> Decision<Self::Event, Self::Effect, Self::Input>
+///     fn decide(_now, state, input)
+///         -> Decision<Self::Event, Self::Effect, Self::Input, Self::Rejection>
 ///     {
 ///         match input {
-///             OrderInput::Create { order_id, items, .. } => {
-///                 Decision::event(OrderEvent::Created { items: items.clone() })
-///                     .with_effect(OrderEffect::SendConfirmation)
-///                     .with_timer_after(
-///                         Duration::from_secs(3600),
-///                         OrderInput::PaymentTimeout { order_id: order_id.clone() }
-///                     )
-///             }
+///             OrderInput::Create { .. } => Decision::accept(OrderEvent::Created { /* ... */ })
+///                 .with_effect(OrderEffect::SendConfirmation),
 ///             OrderInput::Cancel { .. } if state.is_shipped() => {
-///                 Decision::event(OrderEvent::CancelRejected { reason: "Already shipped" })
-///                     .with_effect(OrderEffect::NotifySupport)
+///                 Decision::reject(OrderRejection::AlreadyShipped)
 ///             }
 ///             OrderInput::Ship { tracking, .. } => {
-///                 Decision::event(OrderEvent::Shipped { tracking: tracking.clone() })
+///                 Decision::accept(OrderEvent::Shipped { tracking: tracking.clone() })
 ///             }
 ///         }
 ///     }
@@ -91,6 +74,15 @@ pub trait Workflow {
     /// Side effects queued to the outbox for external processing.
     type Effect: Serialize + Send;
 
+    /// Typed rejection payload returned when [`decide`](Self::decide) chooses
+    /// [`Decision::Reject`].
+    ///
+    /// Common choices:
+    /// - A domain enum for structured rejections: `OrderRejection::AlreadyPaid`.
+    /// - `Cow<'static, str>` for simple string reasons.
+    /// - `std::convert::Infallible` if the workflow can never reject.
+    type Rejection: Serialize + Send + std::fmt::Debug;
+
     /// Workflow type identifier. Combined with [`HasWorkflowId::workflow_id`]
     /// to form a [`WorkflowRef`] correlation key. Must be stable across deployments.
     const TYPE: &'static str;
@@ -106,22 +98,18 @@ pub trait Workflow {
     /// Must be deterministic and side-effect free. The `now` parameter provides
     /// the current time for decisions that depend on it (e.g., scheduling timers).
     ///
-    /// Returns a [`Decision`] containing events to persist, effects to execute,
-    /// and timers to schedule. Every input must produce at least one event.
+    /// Returns a [`Decision`]: [`Decision::Accept`] with events/effects/timers,
+    /// or [`Decision::Reject`] with a typed rejection that causes the input to
+    /// be discarded without mutating state.
     fn decide(
         now: OffsetDateTime,
         state: &Self::State,
         input: &Self::Input,
-    ) -> Decision<Self::Event, Self::Effect, Self::Input>;
+    ) -> Decision<Self::Event, Self::Effect, Self::Input, Self::Rejection>;
 
-    /// Check if the state represents a terminal (completed) workflow.
-    ///
-    /// Terminal workflows are marked as completed in the store and can be
-    /// skipped for cleanup, monitoring, or to reject further inputs.
-    ///
-    /// Default implementation returns `false` (workflow never terminates).
-    ///
-    /// # Example
+    /// Check if the state is terminal. Terminal instances are marked
+    /// completed in the store and silently drop further inputs. Defaults
+    /// to never terminal.
     ///
     /// ```ignore
     /// fn is_terminal(state: &Self::State) -> bool {
@@ -132,23 +120,14 @@ pub trait Workflow {
         false
     }
 
-    /// Optional unique key for at-most-one-active-workflow constraint.
-    ///
-    /// When set, the store enforces that only one active (non-completed) workflow
-    /// of this type can exist with the same unique key. If a second workflow tries
-    /// to start with the same key while the first is still active, it will fail
+    /// Optional at-most-one-active-workflow key. While the first workflow
+    /// with a given key is active, further starts with the same key fail
     /// with [`Error::UniqueKeyConflict`](crate::Error::UniqueKeyConflict).
+    /// The key releases once [`is_terminal`](Self::is_terminal) returns
+    /// `true`.
     ///
-    /// Once the first workflow completes (i.e., [`is_terminal`](Self::is_terminal)
-    /// returns `true`), the key is released and a new workflow can start.
-    ///
-    /// **Important:** Any workflow that uses `unique_key()` must also implement
-    /// `is_terminal()`. Otherwise the workflow never completes and the key is
-    /// held forever.
-    ///
-    /// Default implementation returns `None` — no constraint.
-    ///
-    /// # Example
+    /// **Pair with [`is_terminal`](Self::is_terminal).** Without it the
+    /// key is held forever.
     ///
     /// ```ignore
     /// fn unique_key(input: &Self::Input) -> Option<String> {
@@ -304,163 +283,145 @@ impl From<(String, WorkflowId)> for WorkflowRef {
     }
 }
 
-/// Actions to execute as a result of a workflow decision.
+/// What [`Workflow::decide`] returns for an input.
 ///
-/// Every decision must produce at least one event (enforced by [`NonEmpty`]).
-/// This ensures a complete audit trail — every input results in a recorded event,
-/// even if it's a rejection event for invalid inputs.
+/// `Accept` advances state via events and may enqueue effects/timers;
+/// `Reject` discards the input with a typed rejection payload.
 ///
-/// # Structure
-///
-/// - **Events**: Facts about what happened (at least one required)
-/// - **Effects**: Side effects to execute immediately (optional)
-/// - **Timers**: Inputs to deliver at a future time (optional)
-/// - **Timer cancellations**: Remove pending timers by key (optional)
-///
-/// # Example
+/// Use the fluent constructors [`accept`](Self::accept) and
+/// [`reject`](Self::reject) together with `with_*` / `cancel_*` builders:
 ///
 /// ```ignore
-/// use std::time::Duration;
-/// use ironflow::Decision;
-///
-/// // Decision with event and effect
-/// let decision = Decision::event(OrderEvent::Created)
-///     .with_effect(OrderEffect::SendConfirmation);
-///
-/// // Rejection is just another event type
-/// let decision = Decision::event(OrderEvent::CancelRejected { reason: "shipped" })
-///     .with_effect(OrderEffect::NotifySupport);
+/// match (state, input) {
+///     (State::Draft, Input::Create { .. }) => Decision::accept(Event::Created)
+///         .with_effect(Effect::SendConfirmation)
+///         .with_timer_after(Duration::from_secs(3600), Input::PaymentTimeout),
+///     (State::Paid { .. }, Input::Pay { .. }) => {
+///         Decision::reject(OrderRejection::AlreadyPaid)
+///     }
+///     // ...
+/// }
 /// ```
+///
+/// Builder methods applied to a `Reject` are silent no-ops — this keeps
+/// fluent chaining ergonomic and only matters if you accidentally chain
+/// `.with_effect(..)` after `Decision::reject(..)`, which is typically a
+/// typo the author would spot immediately.
 #[derive(Debug, Clone)]
-pub struct Decision<E, F, I> {
-    events: NonEmpty<E>,
-    effects: Vec<F>,
-    timers: Vec<Timer<I>>,
-    cancel_timers: Vec<String>,
+pub enum Decision<E, F, I, R> {
+    /// Input accepted. Events are appended, effects enqueued, timers
+    /// scheduled/cancelled, and the workflow's state advances via
+    /// [`Workflow::evolve`]. At least one event is required (enforced by
+    /// [`NonEmpty`]).
+    Accept {
+        /// Events to append to the store.
+        events: NonEmpty<E>,
+        /// Effects to enqueue to the outbox.
+        effects: Vec<F>,
+        /// Timers to schedule.
+        timers: Vec<Timer<I>>,
+        /// Pending timers (by key) to cancel.
+        cancel_timers: Vec<String>,
+    },
+    /// Input rejected with a typed payload. No state change.
+    Reject(R),
 }
 
-impl<E, F, I> Decision<E, F, I> {
-    /// Create a decision with a single event.
-    pub fn event(event: E) -> Self {
-        Self {
+impl<E, F, I, R> Decision<E, F, I, R> {
+    /// Start an `Accept` from a single event. Chain `with_*`/`cancel_*`
+    /// to add effects, timers, or cancellations.
+    pub fn accept(event: E) -> Self {
+        Self::Accept {
             events: NonEmpty::new(event),
-            effects: vec![],
-            timers: vec![],
-            cancel_timers: vec![],
+            effects: Vec::new(),
+            timers: Vec::new(),
+            cancel_timers: Vec::new(),
         }
     }
 
-    /// Create a decision from a non-empty collection of events.
-    pub fn from_events(events: NonEmpty<E>) -> Self {
-        Self {
+    /// Start an `Accept` from a non-empty collection of events.
+    pub fn accept_events(events: NonEmpty<E>) -> Self {
+        Self::Accept {
             events,
-            effects: vec![],
-            timers: vec![],
-            cancel_timers: vec![],
+            effects: Vec::new(),
+            timers: Vec::new(),
+            cancel_timers: Vec::new(),
         }
     }
 
-    /// Try to create a decision from an iterator of events.
-    ///
-    /// Returns `None` if the iterator is empty.
-    pub fn try_from_iter(events: impl IntoIterator<Item = E>) -> Option<Self> {
-        Some(Self {
-            events: NonEmpty::collect(events)?,
-            effects: vec![],
-            timers: vec![],
-            cancel_timers: vec![],
-        })
+    /// Try to start an `Accept` from an iterator of events. Returns
+    /// `None` if the iterator is empty.
+    pub fn try_accept(events: impl IntoIterator<Item = E>) -> Option<Self> {
+        NonEmpty::collect(events).map(Self::accept_events)
     }
 
-    /// Add an effect to this decision.
-    ///
-    /// Effects are side effects executed immediately by the effect worker
-    /// (e.g., send email, call API, update external system).
+    /// Reject the input with a typed payload.
+    pub fn reject(reason: R) -> Self {
+        Self::Reject(reason)
+    }
+
+    /// Add an effect to an `Accept`. No-op on `Reject`.
     pub fn with_effect(mut self, effect: F) -> Self {
-        self.effects.push(effect);
+        if let Self::Accept { effects, .. } = &mut self {
+            effects.push(effect);
+        }
         self
     }
 
-    /// Add multiple effects to this decision.
-    pub fn with_effects(mut self, effects: impl IntoIterator<Item = F>) -> Self {
-        self.effects.extend(effects);
+    /// Add multiple effects to an `Accept`. No-op on `Reject`.
+    pub fn with_effects(mut self, effects_in: impl IntoIterator<Item = F>) -> Self {
+        if let Self::Accept { effects, .. } = &mut self {
+            effects.extend(effects_in);
+        }
         self
     }
 
-    /// Add a timer to this decision.
-    ///
-    /// Timers schedule an input to be delivered at a future time.
-    /// When the timer fires, the input is routed to the workflow's `decide` function.
+    /// Add a timer to an `Accept`. No-op on `Reject`.
     pub fn with_timer(mut self, timer: Timer<I>) -> Self {
-        self.timers.push(timer);
+        if let Self::Accept { timers, .. } = &mut self {
+            timers.push(timer);
+        }
         self
     }
 
-    /// Add a timer that fires at a specific time.
-    ///
-    /// Convenience method for `with_timer(Timer::at(fire_at, input))`.
-    pub fn with_timer_at(self, fire_at: OffsetDateTime, input: I) -> Self {
-        self.with_timer(Timer::at(fire_at, input))
-    }
-
-    /// Add a timer that fires after a delay from now.
-    ///
-    /// Convenience method for `with_timer(Timer::after(delay, input))`.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// Decision::event(OrderEvent::Created)
-    ///     .with_timer_after(
-    ///         Duration::from_secs(3600),
-    ///         OrderInput::PaymentTimeout { order_id }
-    ///     )
-    /// ```
+    /// Add a timer that fires after `delay` from persist time (DB-side).
+    /// No-op on `Reject`.
     pub fn with_timer_after(self, delay: Duration, input: I) -> Self {
         self.with_timer(Timer::after(delay, input))
     }
 
-    /// Add multiple timers to this decision.
-    pub fn with_timers(mut self, timers: impl IntoIterator<Item = Timer<I>>) -> Self {
-        self.timers.extend(timers);
+    /// Add multiple timers to an `Accept`. No-op on `Reject`.
+    pub fn with_timers(mut self, timers_in: impl IntoIterator<Item = Timer<I>>) -> Self {
+        if let Self::Accept { timers, .. } = &mut self {
+            timers.extend(timers_in);
+        }
         self
     }
 
-    /// Cancel a pending timer by key.
+    /// Cancel a pending timer by key. No-op on `Reject`.
     pub fn cancel_timer(mut self, key: impl Into<String>) -> Self {
-        self.cancel_timers.push(key.into());
+        if let Self::Accept { cancel_timers, .. } = &mut self {
+            cancel_timers.push(key.into());
+        }
         self
     }
 
-    /// Cancel multiple pending timers by key.
+    /// Cancel multiple pending timers by key. No-op on `Reject`.
     pub fn cancel_timers(mut self, keys: impl IntoIterator<Item = String>) -> Self {
-        self.cancel_timers.extend(keys);
+        if let Self::Accept { cancel_timers, .. } = &mut self {
+            cancel_timers.extend(keys);
+        }
         self
     }
 
-    /// Borrow the events produced by this decision.
-    pub fn events(&self) -> &NonEmpty<E> {
-        &self.events
+    /// Returns `true` if this is an `Accept`.
+    pub fn is_accept(&self) -> bool {
+        matches!(self, Self::Accept { .. })
     }
 
-    /// Borrow the effects produced by this decision.
-    pub fn effects(&self) -> &[F] {
-        &self.effects
-    }
-
-    /// Borrow the timers produced by this decision.
-    pub fn timers(&self) -> &[Timer<I>] {
-        &self.timers
-    }
-
-    /// Borrow the timer cancellation keys.
-    pub fn canceled_timers(&self) -> &[String] {
-        &self.cancel_timers
-    }
-
-    /// Consume the decision into its parts.
-    pub(crate) fn into_parts(self) -> (NonEmpty<E>, Vec<F>, Vec<Timer<I>>, Vec<String>) {
-        (self.events, self.effects, self.timers, self.cancel_timers)
+    /// Returns `true` if this is a `Reject`.
+    pub fn is_reject(&self) -> bool {
+        matches!(self, Self::Reject(_))
     }
 }
 
@@ -472,133 +433,167 @@ mod tests {
     // Decision tests
     // =========================================================================
 
+    // Test type alias to keep matches short and unambiguous about R.
+    type D<E, F, I> = Decision<E, F, I, &'static str>;
+
+    fn unwrap_accept<E, F, I, R>(
+        d: Decision<E, F, I, R>,
+    ) -> (NonEmpty<E>, Vec<F>, Vec<Timer<I>>, Vec<String>) {
+        match d {
+            Decision::Accept {
+                events,
+                effects,
+                timers,
+                cancel_timers,
+            } => (events, effects, timers, cancel_timers),
+            Decision::Reject(_) => panic!("expected Accept, got Reject"),
+        }
+    }
+
     #[test]
     fn decision_single_event() {
-        let decision = Decision::<&str, i32, ()>::event("created")
+        let decision = D::<&str, i32, ()>::accept("created")
             .with_effect(1)
             .with_effect(2);
+        let (events, effects, timers, _) = unwrap_accept(decision);
 
-        assert_eq!(decision.events().len(), 1);
-        assert_eq!(decision.events().first(), &"created");
-        assert_eq!(decision.effects(), &[1, 2]);
-        assert!(decision.timers().is_empty());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events.first(), &"created");
+        assert_eq!(effects, vec![1, 2]);
+        assert!(timers.is_empty());
     }
 
     #[test]
-    fn decision_from_events() {
+    fn decision_accept_events() {
         let events = NonEmpty::collect(["a", "b", "c"]).unwrap();
-        let decision = Decision::<&str, (), ()>::from_events(events);
+        let decision = D::<&str, (), ()>::accept_events(events);
+        let (events, effects, timers, _) = unwrap_accept(decision);
 
-        let collected: Vec<_> = decision.events().iter().copied().collect();
+        let collected: Vec<_> = events.iter().copied().collect();
         assert_eq!(collected, vec!["a", "b", "c"]);
-        assert!(decision.effects().is_empty());
-        assert!(decision.timers().is_empty());
+        assert!(effects.is_empty());
+        assert!(timers.is_empty());
     }
 
     #[test]
-    fn decision_try_from_iter_some() {
-        let decision: Option<Decision<&str, (), ()>> = Decision::try_from_iter(["a", "b"]);
-        assert!(decision.is_some());
+    fn decision_try_accept_some() {
+        let decision: Option<D<&str, (), ()>> = Decision::try_accept(["a", "b"]);
+        assert!(decision.is_some_and(|d| d.is_accept()));
     }
 
     #[test]
-    fn decision_try_from_iter_none() {
-        let decision: Option<Decision<&str, (), ()>> = Decision::try_from_iter(std::iter::empty());
+    fn decision_try_accept_none() {
+        let decision: Option<D<&str, (), ()>> = Decision::try_accept(std::iter::empty());
         assert!(decision.is_none());
     }
 
     #[test]
     fn decision_with_effects_batch() {
-        let decision = Decision::<&str, i32, ()>::event("created").with_effects([1, 2, 3]);
-
-        assert_eq!(decision.effects(), &[1, 2, 3]);
+        let decision = D::<&str, i32, ()>::accept("created").with_effects([1, 2, 3]);
+        let (_, effects, _, _) = unwrap_accept(decision);
+        assert_eq!(effects, vec![1, 2, 3]);
     }
 
     #[test]
     fn decision_with_timer() {
-        let decision = Decision::<&str, (), &str>::event("created")
+        let decision = D::<&str, (), &str>::accept("created")
             .with_timer_after(Duration::from_secs(60), "timeout");
+        let (_, _, timers, _) = unwrap_accept(decision);
 
-        assert_eq!(decision.timers().len(), 1);
-        assert_eq!(decision.timers()[0].input, "timeout");
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].input, "timeout");
     }
 
     #[test]
-    fn decision_with_timer_at() {
-        let fire_at = OffsetDateTime::now_utc() + Duration::from_secs(3600);
-        let decision =
-            Decision::<&str, (), &str>::event("created").with_timer_at(fire_at, "reminder");
+    fn decision_with_timer_after_carries_delay() {
+        let delay = Duration::from_secs(3600);
+        let decision = D::<&str, (), &str>::accept("created").with_timer_after(delay, "reminder");
+        let (_, _, timers, _) = unwrap_accept(decision);
 
-        assert_eq!(decision.timers().len(), 1);
-        assert_eq!(decision.timers()[0].input, "reminder");
-        assert_eq!(decision.timers()[0].fire_at, fire_at);
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].input, "reminder");
+        assert_eq!(timers[0].delay, delay);
     }
 
     #[test]
     fn decision_with_timer_direct() {
         let timer = Timer::after(Duration::from_secs(60), "timeout").with_key("my-timer");
-        let decision = Decision::<&str, (), &str>::event("created").with_timer(timer);
+        let decision = D::<&str, (), &str>::accept("created").with_timer(timer);
+        let (_, _, timers, _) = unwrap_accept(decision);
 
-        assert_eq!(decision.timers().len(), 1);
-        assert_eq!(decision.timers()[0].key.as_deref(), Some("my-timer"));
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].key.as_deref(), Some("my-timer"));
     }
 
     #[test]
     fn decision_with_timers_batch() {
-        let timers = vec![
+        let timers_in = vec![
             Timer::after(Duration::from_secs(60), "t1"),
             Timer::after(Duration::from_secs(120), "t2"),
         ];
-        let decision = Decision::<&str, (), &str>::event("created").with_timers(timers);
+        let decision = D::<&str, (), &str>::accept("created").with_timers(timers_in);
+        let (_, _, timers, _) = unwrap_accept(decision);
 
-        assert_eq!(decision.timers().len(), 2);
+        assert_eq!(timers.len(), 2);
     }
 
     #[test]
     fn decision_with_multiple_timers() {
-        let decision = Decision::<&str, (), &str>::event("created")
+        let decision = D::<&str, (), &str>::accept("created")
             .with_timer_after(Duration::from_secs(60), "timeout1")
             .with_timer_after(Duration::from_secs(120), "timeout2");
+        let (_, _, timers, _) = unwrap_accept(decision);
 
-        assert_eq!(decision.timers().len(), 2);
+        assert_eq!(timers.len(), 2);
     }
 
     #[test]
     fn decision_cancel_timer() {
-        let decision = Decision::<&str, (), ()>::event("completed").cancel_timer("payment-timeout");
+        let decision = D::<&str, (), ()>::accept("completed").cancel_timer("payment-timeout");
+        let (_, _, _, cancel_timers) = unwrap_accept(decision);
 
-        assert_eq!(decision.canceled_timers(), &["payment-timeout"]);
+        assert_eq!(cancel_timers, vec!["payment-timeout".to_string()]);
     }
 
     #[test]
     fn decision_cancel_timers_batch() {
-        let decision = Decision::<&str, (), ()>::event("completed")
+        let decision = D::<&str, (), ()>::accept("completed")
             .cancel_timers(["timer-1".to_string(), "timer-2".to_string()]);
+        let (_, _, _, cancel_timers) = unwrap_accept(decision);
 
-        assert_eq!(decision.canceled_timers().len(), 2);
+        assert_eq!(cancel_timers.len(), 2);
     }
 
     #[test]
     fn decision_with_effect_and_timer() {
-        let decision = Decision::<&str, &str, &str>::event("created")
+        let decision = D::<&str, &str, &str>::accept("created")
             .with_effect("send_email")
             .with_timer_after(Duration::from_secs(60), "timeout");
+        let (_, effects, timers, _) = unwrap_accept(decision);
 
-        assert_eq!(decision.effects().len(), 1);
-        assert_eq!(decision.timers().len(), 1);
+        assert_eq!(effects.len(), 1);
+        assert_eq!(timers.len(), 1);
     }
 
     #[test]
-    fn decision_into_parts() {
-        let decision = Decision::<&str, i32, ()>::event("created")
-            .with_effect(42)
-            .cancel_timer("old-timer");
-        let (events, effects, timers, cancel_timers) = decision.into_parts();
+    fn decision_reject_carries_payload() {
+        let decision: Decision<&str, (), (), &'static str> = Decision::reject("nope");
+        assert!(decision.is_reject());
+        match decision {
+            Decision::Reject(reason) => assert_eq!(reason, "nope"),
+            Decision::Accept { .. } => panic!("expected Reject"),
+        }
+    }
 
-        assert_eq!(events.first(), &"created");
-        assert_eq!(effects, vec![42]);
-        assert!(timers.is_empty());
-        assert_eq!(cancel_timers, vec!["old-timer"]);
+    #[test]
+    fn builder_methods_are_noop_on_reject() {
+        // with_effect and friends on a Reject should silently no-op —
+        // the Reject variant must stay unchanged.
+        let decision: Decision<&str, i32, (), &'static str> = Decision::reject("nope")
+            .with_effect(1)
+            .with_timer(Timer::after(Duration::from_secs(1), ()))
+            .cancel_timer("k");
+        assert!(decision.is_reject());
     }
 
     // =========================================================================

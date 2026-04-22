@@ -238,6 +238,24 @@ impl Store for PgStore {
             uow,
         })
     }
+
+    async fn record_observation(&self, observation: InputObservation) -> Result<()> {
+        sqlx::query!(
+            r#"INSERT INTO ironflow.input_observations
+               (workflow_type, workflow_id, input_type, payload, outcome, rejection_payload)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
+            observation.workflow_type,
+            observation.workflow_id.as_str(),
+            observation.input_type,
+            observation.payload,
+            observation.outcome.as_str(),
+            observation.outcome.rejection_payload(),
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 /// PostgreSQL unit of work.
@@ -307,33 +325,41 @@ impl UnitOfWork for PgUnitOfWork<'_> {
     where
         T: IntoIterator<Item = Timer<Value>> + Send,
     {
-        // Collect to avoid holding iterator across await
+        // `fire_at = now() + delay` is computed DB-side so the canonical
+        // fire time is the DB clock (no app↔DB clock skew). Keyed timers
+        // upsert and reset retry state so a reschedule is genuinely fresh
+        // rather than inheriting the previous run's attempts/backoff lock.
         let timers: Vec<_> = timers.into_iter().collect();
         for timer in timers {
+            let delay_secs = timer.delay.as_secs_f64();
             if let Some(key) = &timer.key {
-                // Timer with key: upsert (replace existing timer with same key)
                 sqlx::query!(
                     r#"INSERT INTO ironflow.timers (workflow_type, workflow_id, fire_at, input, key)
-                       VALUES ($1, $2, $3, $4, $5)
+                       VALUES ($1, $2, now() + ($3 * interval '1 second'), $4, $5)
                        ON CONFLICT (workflow_type, workflow_id, key)
                        WHERE key IS NOT NULL AND processed_at IS NULL
-                       DO UPDATE SET fire_at = EXCLUDED.fire_at, input = EXCLUDED.input, created_at = now()"#,
+                       DO UPDATE SET fire_at = EXCLUDED.fire_at,
+                                     input = EXCLUDED.input,
+                                     created_at = now(),
+                                     attempts = 0,
+                                     last_error = NULL,
+                                     locked_until = NULL,
+                                     locked_by = NULL"#,
                     self.workflow_type,
                     &self.workflow_id,
-                    timer.fire_at,
+                    delay_secs,
                     &timer.input,
                     key,
                 )
                 .execute(&mut *self.tx)
                 .await?;
             } else {
-                // Timer without key: simple insert
                 sqlx::query!(
                     r#"INSERT INTO ironflow.timers (workflow_type, workflow_id, fire_at, input)
-                       VALUES ($1, $2, $3, $4)"#,
+                       VALUES ($1, $2, now() + ($3 * interval '1 second'), $4)"#,
                     self.workflow_type,
                     &self.workflow_id,
-                    timer.fire_at,
+                    delay_secs,
                     &timer.input,
                 )
                 .execute(&mut *self.tx)
@@ -372,12 +398,14 @@ impl UnitOfWork for PgUnitOfWork<'_> {
     async fn record_input_observation(&mut self, observation: InputObservation) -> Result<()> {
         sqlx::query!(
             r#"INSERT INTO ironflow.input_observations
-               (workflow_type, workflow_id, input_type, payload)
-               VALUES ($1, $2, $3, $4)"#,
+               (workflow_type, workflow_id, input_type, payload, outcome, rejection_payload)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
             observation.workflow_type,
             observation.workflow_id.as_str(),
             observation.input_type,
             observation.payload,
+            observation.outcome.as_str(),
+            observation.outcome.rejection_payload(),
         )
         .execute(&mut *self.tx)
         .await?;
@@ -754,7 +782,7 @@ impl OutboxStore for PgStore {
         Ok(row.count as u64)
     }
 
-    async fn mark_timer_processed(&self, timer_id: Uuid) -> Result<()> {
+    async fn mark_timer_processed(&self, timer_id: Uuid, worker_id: &str) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE ironflow.timers
@@ -762,8 +790,10 @@ impl OutboxStore for PgStore {
                 locked_until = NULL,
                 locked_by = NULL
             WHERE id = $1
+              AND locked_by = $2
             "#,
             timer_id,
+            worker_id,
         )
         .execute(&self.pool)
         .await?;
@@ -774,10 +804,15 @@ impl OutboxStore for PgStore {
     async fn record_timer_failure(
         &self,
         timer_id: Uuid,
+        worker_id: &str,
         error: &str,
         backoff_duration: Duration,
     ) -> Result<()> {
         // Backoff computed in DB to avoid clock skew between app and DB servers.
+        //
+        // `AND locked_by = $4` ensures a stale worker whose claim has been
+        // taken over by another worker can't clobber the new claimant's
+        // state — the UPDATE matches zero rows and the call is a no-op.
         let backoff_secs = backoff_duration.as_secs_f64();
         sqlx::query!(
             r#"
@@ -787,10 +822,12 @@ impl OutboxStore for PgStore {
                 locked_until = now() + ($3 * interval '1 second'),
                 locked_by = NULL
             WHERE id = $1
+              AND locked_by = $4
             "#,
             timer_id,
             error,
             backoff_secs,
+            worker_id,
         )
         .execute(&self.pool)
         .await?;

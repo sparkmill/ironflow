@@ -211,18 +211,29 @@ pub trait OutboxStore: Send + Sync + Clone + 'static {
     ///
     /// Sets `processed_at` to the current time, removing it from the
     /// pending queue in the timers table.
+    ///
+    /// Guarded by `locked_by = worker_id` so that if the timer was rescheduled
+    /// (keyed upsert clears `locked_by`) while the worker was processing it,
+    /// this call is a silent no-op and the rescheduled timer stays active.
     fn mark_timer_processed(
         &self,
         timer_id: Uuid,
+        worker_id: &str,
     ) -> impl Future<Output = crate::Result<()>> + Send;
 
     /// Record a timer execution failure and schedule retry with backoff.
     ///
     /// Increments `attempts`, records the error message, and sets
     /// `locked_until` to `now + backoff_duration` to delay retry.
+    ///
+    /// Guarded by `locked_by = worker_id` so that a late failure from a
+    /// worker whose claim was stolen (lock expired, another worker
+    /// re-claimed) is a silent no-op instead of clobbering the new
+    /// claimant's state.
     fn record_timer_failure(
         &self,
         timer_id: Uuid,
+        worker_id: &str,
         error: &str,
         backoff_duration: Duration,
     ) -> impl Future<Output = crate::Result<()>> + Send;
