@@ -15,7 +15,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Constructors renamed: `Decision::event` → `accept`, `from_events` → `accept_events`, `try_from_iter` → `try_accept`. Added `Decision::reject(payload)`.
 - `WorkflowService::execute<W>` returns `Result<ExecuteOutcome<W::Rejection>>` with `Accepted { events_appended }`, `Rejected(R)`, and `AlreadyCompleted` variants. Inputs to completed workflows no longer silently return `Ok(())`. `execute_dynamic` returns `ExecuteOutcome<Value>`.
 - `Timer::at` and `Decision::with_timer_at` removed. Use `Timer::after(delay, input)` / `with_timer_after(delay, input)`; fire time is computed DB-side. `Timer<I>`'s `fire_at: OffsetDateTime` field replaced with `delay: Duration`.
-- `OutboxStore::mark_timer_processed` and `record_timer_failure` gained a `worker_id: &str` parameter.
+- `OutboxStore::mark_timer_processed` and `record_timer_failure` gained a `worker_id: &str` parameter. `OutboxStore::mark_processed`, `record_failure`, and `record_permanent_failure` gained the same parameter so the effect path can enforce the same stale-claim guard.
 
 ### Added
 
@@ -36,6 +36,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `schedule_timers` keyed upsert now resets `attempts`, `last_error`, `locked_until`, and `locked_by` on reschedule. Previously a rescheduled timer inherited the prior run's failure state.
 - `mark_timer_processed` and `record_timer_failure` guard on `locked_by = $worker_id`, preventing self-rescheduling heartbeat timers from being clobbered and preventing stolen claims from being overwritten by the stale worker's late call.
+- `mark_processed`, `record_failure`, and `record_permanent_failure` on the effect outbox now guard on `locked_by = $worker_id` (matching the timer path). A stale worker whose claim was taken over (lock expired, another worker re-claimed) no longer over-increments `attempts`, shortens the new claimant's `locked_until`, or clears `locked_by` while the new claimant is still processing.
+- `WorkflowService::fetch_latest_state` now reports event-deserialization failures with workflow type, id, and sequence context (via `Error::EventDeserialization`), matching the decider's replay path instead of surfacing a context-free `serde_json` error.
 
 ### Migration
 
@@ -43,7 +45,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 2. Replace `Decision::event(...)` with `Decision::accept(...)`; replace synthesized rejection events with `Decision::reject(...)`.
 3. Match on `ExecuteOutcome<W::Rejection>` at call sites of `service.execute::<W>(...)`.
 4. Replace `Timer::at(fire_at, input)` with `Timer::after(delay, input)` (compute `delay = target - now_utc()` if absolute time is needed).
-5. Custom `OutboxStore` impls: add `worker_id: &str` to `mark_timer_processed` and `record_timer_failure`.
+5. Custom `OutboxStore` impls: add `worker_id: &str` to `mark_timer_processed`, `record_timer_failure`, `mark_processed`, `record_failure`, and `record_permanent_failure`.
 6. Run `cargo sqlx migrate run`.
 
 ## [0.3.0] - 2026-02-13

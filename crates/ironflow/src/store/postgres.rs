@@ -581,7 +581,10 @@ impl OutboxStore for PgStore {
         }))
     }
 
-    async fn mark_processed(&self, effect_id: Uuid) -> Result<()> {
+    async fn mark_processed(&self, effect_id: Uuid, worker_id: &str) -> Result<()> {
+        // `AND locked_by = $2` ensures a stale worker whose claim has been
+        // taken over by another worker can't clobber the new claimant's
+        // state — the UPDATE matches zero rows and the call is a no-op.
         sqlx::query!(
             r#"
             UPDATE ironflow.outbox
@@ -589,8 +592,10 @@ impl OutboxStore for PgStore {
                 locked_until = NULL,
                 locked_by = NULL
             WHERE id = $1
+              AND locked_by = $2
             "#,
             effect_id,
+            worker_id,
         )
         .execute(&self.pool)
         .await?;
@@ -601,10 +606,15 @@ impl OutboxStore for PgStore {
     async fn record_failure(
         &self,
         effect_id: Uuid,
+        worker_id: &str,
         error: &str,
         backoff_duration: Duration,
     ) -> Result<()> {
         // Backoff computed in DB to avoid clock skew between app and DB servers.
+        //
+        // `AND locked_by = $4` ensures a stale worker whose claim has been
+        // taken over by another worker can't over-increment `attempts` or
+        // shorten the new claimant's `locked_until`.
         let backoff_secs = backoff_duration.as_secs_f64();
         sqlx::query!(
             r#"
@@ -614,10 +624,12 @@ impl OutboxStore for PgStore {
                 locked_until = now() + ($3 * interval '1 second'),
                 locked_by = NULL
             WHERE id = $1
+              AND locked_by = $4
             "#,
             effect_id,
             error,
             backoff_secs,
+            worker_id,
         )
         .execute(&self.pool)
         .await?;
@@ -628,9 +640,13 @@ impl OutboxStore for PgStore {
     async fn record_permanent_failure(
         &self,
         effect_id: Uuid,
+        worker_id: &str,
         error: &str,
         max_attempts: u32,
     ) -> Result<()> {
+        // `AND locked_by = $4` ensures a stale worker whose claim has been
+        // taken over by another worker can't clobber the new claimant's
+        // state.
         sqlx::query!(
             r#"
             UPDATE ironflow.outbox
@@ -639,10 +655,12 @@ impl OutboxStore for PgStore {
                 locked_until = NULL,
                 locked_by = NULL
             WHERE id = $1
+              AND locked_by = $4
             "#,
             effect_id,
             max_attempts as i32,
             error,
+            worker_id,
         )
         .execute(&self.pool)
         .await?;

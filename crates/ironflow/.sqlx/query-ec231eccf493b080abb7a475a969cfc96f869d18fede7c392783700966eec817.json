@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE ironflow.outbox\n            SET attempts = $2,\n                last_error = $3,\n                locked_until = NULL,\n                locked_by = NULL\n            WHERE id = $1\n              AND locked_by = $4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ec231eccf493b080abb7a475a969cfc96f869d18fede7c392783700966eec817"
+}

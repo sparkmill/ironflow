@@ -485,8 +485,17 @@ db_test!(effect_permanent_failure_dead_letters_immediately, |pool| {
 
     let effect_id = fetch_effect_id(pool, "id-1").await?;
 
+    // Seed a locked_by so the guard matches — claim normally would, but this
+    // test bypasses claim to exercise the dead-letter path directly.
+    sqlx::query!(
+        "UPDATE ironflow.outbox SET locked_by = 'worker-1' WHERE id = $1",
+        effect_id,
+    )
+    .execute(pool)
+    .await?;
+
     store
-        .record_permanent_failure(effect_id, "boom", TEST_MAX_ATTEMPTS)
+        .record_permanent_failure(effect_id, "worker-1", "boom", TEST_MAX_ATTEMPTS)
         .await?;
 
     let dead_letters = store
@@ -781,7 +790,7 @@ db_test!(mark_processed_removes_effect_from_queue, |pool| {
         .await?
         .unwrap();
 
-    store.mark_processed(effect.id).await?;
+    store.mark_processed(effect.id, "worker-1").await?;
 
     let next = store
         .claim_effect("worker-2", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
@@ -817,7 +826,12 @@ db_test!(
             .unwrap();
 
         store
-            .record_failure(effect.id, "connection timeout", Duration::from_secs(1))
+            .record_failure(
+                effect.id,
+                "worker-1",
+                "connection timeout",
+                Duration::from_secs(1),
+            )
             .await?;
 
         let row = sqlx::query!(
@@ -838,6 +852,100 @@ db_test!(
         Ok(())
     }
 );
+
+db_test!(record_failure_skips_stale_claim, |pool| {
+    // Race scenario: Worker A claims an effect, takes longer to process than
+    // its lock_duration allows. At lock expiry Worker B re-claims the effect
+    // and starts its own processing. Worker A's handler eventually fails and
+    // calls record_failure. Without a locked_by guard, A would over-increment
+    // attempts, potentially shorten B's locked_until below B's real lock
+    // expiry, and clear locked_by — letting a third worker snipe while B is
+    // still running.
+    let store = PgStore::new(pool.clone());
+
+    let (_, mut uow) = begin_active(&store, "test", &WorkflowId::new("stale-effect-1")).await?;
+    uow.enqueue_effects([TestEffect::SendEmail {
+        to: "race@example.com".into(),
+    }])
+    .await?;
+    uow.commit().await?;
+
+    let effect = store
+        .claim_effect("worker-A", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .await?
+        .unwrap();
+
+    // Simulate another worker re-claiming after A's lock expired.
+    sqlx::query!(
+        "UPDATE ironflow.outbox SET locked_by = 'worker-B' WHERE id = $1",
+        effect.id,
+    )
+    .execute(pool)
+    .await?;
+
+    // Worker A's stale calls — must be no-ops.
+    store
+        .record_failure(effect.id, "worker-A", "stale", Duration::from_secs(60))
+        .await?;
+
+    let row = sqlx::query!(
+        "SELECT attempts, locked_by, last_error FROM ironflow.outbox WHERE id = $1",
+        effect.id,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    assert_eq!(
+        row.attempts, 0,
+        "attempts must not increment on stale claim"
+    );
+    assert_eq!(
+        row.locked_by.as_deref(),
+        Some("worker-B"),
+        "B's claim must be preserved, got {:?}",
+        row.locked_by
+    );
+    assert!(
+        row.last_error.is_none(),
+        "last_error must not be overwritten, got {:?}",
+        row.last_error
+    );
+
+    // Same for mark_processed from the stale worker.
+    store.mark_processed(effect.id, "worker-A").await?;
+    let processed_at: Option<time::OffsetDateTime> = sqlx::query_scalar!(
+        "SELECT processed_at FROM ironflow.outbox WHERE id = $1",
+        effect.id,
+    )
+    .fetch_one(pool)
+    .await?;
+    assert!(
+        processed_at.is_none(),
+        "stale mark_processed must not clobber B's claim"
+    );
+
+    // Same for record_permanent_failure.
+    store
+        .record_permanent_failure(effect.id, "worker-A", "stale", TEST_MAX_ATTEMPTS)
+        .await?;
+    let row = sqlx::query!(
+        "SELECT attempts, locked_by FROM ironflow.outbox WHERE id = $1",
+        effect.id,
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        row.attempts, 0,
+        "stale record_permanent_failure must not touch attempts"
+    );
+    assert_eq!(
+        row.locked_by.as_deref(),
+        Some("worker-B"),
+        "stale record_permanent_failure must not clear B's claim"
+    );
+
+    Ok(())
+});
 
 db_test!(retry_dead_letter_resets_attempts, |pool| {
     let store = PgStore::new(pool.clone());

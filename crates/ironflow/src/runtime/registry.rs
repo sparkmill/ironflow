@@ -187,8 +187,10 @@ where
             .await?;
 
         let mut state = W::State::default();
-        for event in events {
-            let typed: W::Event = serde_json::from_value(event.payload)?;
+        for (sequence, event) in events.into_iter().enumerate() {
+            let typed: W::Event = serde_json::from_value(event.payload).map_err(|e| {
+                crate::Error::event_deserialization(W::TYPE, workflow_id.as_str(), sequence, e)
+            })?;
             state = W::evolve(state, typed);
         }
 

@@ -119,6 +119,7 @@ where
             self.outbox
                 .record_permanent_failure(
                     effect.id,
+                    &self.worker_id,
                     &error_msg,
                     self.config.retry_policy.max_attempts,
                 )
@@ -187,7 +188,9 @@ where
                 }
 
                 // Mark as processed
-                self.outbox.mark_processed(effect.id).await?;
+                self.outbox
+                    .mark_processed(effect.id, &self.worker_id)
+                    .await?;
                 debug!(effect_id = %effect.id, "Effect processed successfully");
             }
             Err(effect_error) => {
@@ -205,6 +208,7 @@ where
                     self.outbox
                         .record_permanent_failure(
                             effect.id,
+                            &self.worker_id,
                             &error_msg,
                             self.config.retry_policy.max_attempts,
                         )
@@ -235,7 +239,9 @@ where
             .config
             .retry_policy
             .backoff_duration(effect.attempts + 1);
-        self.outbox.record_failure(effect.id, error, backoff).await
+        self.outbox
+            .record_failure(effect.id, &self.worker_id, error, backoff)
+            .await
     }
 }
 
