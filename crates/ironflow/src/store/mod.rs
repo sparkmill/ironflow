@@ -17,11 +17,44 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 pub use outbox::{DeadLetter, DeadLetterQuery, OutboxEffect, OutboxStore};
+// Re-exported via `crate::store::ObservationOutcome`.
 #[cfg(feature = "postgres")]
 pub use postgres::PgStore;
 
 use crate::error::Result;
 use crate::workflow::WorkflowId;
+
+/// What the decider did with a given input. The `Rejected` variant carries
+/// the serialized rejection payload so the typestate invariant (payload is
+/// present iff outcome is `Rejected`) is enforced at compile time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObservationOutcome {
+    /// Events were appended and state advanced.
+    Accepted,
+    /// Decide returned Reject — payload carries the serialized rejection.
+    Rejected(Value),
+    /// Workflow was already terminal; decide never ran.
+    AlreadyCompleted,
+}
+
+impl ObservationOutcome {
+    /// The textual form stored in the `outcome` column.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ObservationOutcome::Accepted => "accepted",
+            ObservationOutcome::Rejected(_) => "rejected",
+            ObservationOutcome::AlreadyCompleted => "already_completed",
+        }
+    }
+
+    /// The rejection payload, if any.
+    pub fn rejection_payload(&self) -> Option<&Value> {
+        match self {
+            ObservationOutcome::Rejected(value) => Some(value),
+            _ => None,
+        }
+    }
+}
 
 /// Recorded input observation for introspection.
 #[derive(Debug, Clone)]
@@ -34,6 +67,10 @@ pub struct InputObservation {
     pub input_type: String,
     /// Input payload as JSON.
     pub payload: Value,
+    /// What the decider did with this input. For `Rejected`, the variant
+    /// payload carries the serialized rejection so there's no way to
+    /// construct an inconsistent observation.
+    pub outcome: ObservationOutcome,
 }
 
 /// Stored event with global ordering metadata.
@@ -113,6 +150,17 @@ pub trait Store: Send + Sync + Clone + 'static {
         workflow_id: &WorkflowId,
         unique_key: Option<&str>,
     ) -> impl Future<Output = Result<BeginResult<Self::UnitOfWork<'a>>>> + Send;
+
+    /// Record a single input observation outside a unit of work.
+    ///
+    /// Used by the decider for `Outcome::Reject` and `AlreadyCompleted` paths
+    /// where the main transaction is rolled back (to avoid ghost workflow
+    /// rows). Writes exactly one row to `input_observations` in its own short
+    /// transaction.
+    fn record_observation(
+        &self,
+        observation: InputObservation,
+    ) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// A transactional unit of work for a single workflow instance.

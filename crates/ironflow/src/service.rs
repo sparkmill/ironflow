@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::Workflow;
@@ -14,8 +13,73 @@ use crate::workflow::WorkflowId;
 /// Configuration for the workflow service.
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowServiceConfig {
-    /// Record input observations in the store.
+    /// Record input observations in the store. When enabled, accepted,
+    /// rejected, and dropped-because-completed inputs are all persisted to
+    /// `ironflow.input_observations` with their respective `outcome` and
+    /// rejection payloads. Defaults to `false` (audit is opt-in).
     pub record_input_observations: bool,
+}
+
+/// Result of [`WorkflowService::execute`] and
+/// [`WorkflowService::execute_dynamic`].
+///
+/// Generic over the rejection payload type `R`:
+/// - Typed callers (`execute::<W>`) get `ExecuteOutcome<W::Rejection>` — the
+///   concrete domain type.
+/// - Dynamic callers (`execute_dynamic`) get `ExecuteOutcome<Value>` — the
+///   rejection serialized to JSON, since the type isn't known at compile
+///   time.
+///
+/// Surfaces what happened to an input: events produced (`Accepted`),
+/// rejection from the workflow's decide logic (`Rejected`), or silent drop
+/// because the target workflow had already completed (`AlreadyCompleted`).
+/// Rejection and completion are not errors — they're valid business
+/// outcomes. The `Err` side of the surrounding `Result` is reserved for
+/// framework failures (DB, serde, unknown workflow type).
+#[derive(Debug, Clone)]
+pub enum ExecuteOutcome<R> {
+    /// Events were appended, effects enqueued, timers scheduled.
+    Accepted {
+        /// Number of events the decider appended in this call.
+        events_appended: usize,
+    },
+    /// Workflow's decide returned a rejection payload. No state change.
+    Rejected(R),
+    /// Workflow was already terminal; input was not dispatched to decide.
+    AlreadyCompleted,
+}
+
+impl<R> ExecuteOutcome<R> {
+    /// Transform the rejection payload by `f`, preserving `Accepted` and
+    /// `AlreadyCompleted`.
+    pub fn map<R2, F>(self, f: F) -> ExecuteOutcome<R2>
+    where
+        F: FnOnce(R) -> R2,
+    {
+        match self {
+            ExecuteOutcome::Accepted { events_appended } => {
+                ExecuteOutcome::Accepted { events_appended }
+            }
+            ExecuteOutcome::Rejected(r) => ExecuteOutcome::Rejected(f(r)),
+            ExecuteOutcome::AlreadyCompleted => ExecuteOutcome::AlreadyCompleted,
+        }
+    }
+
+    /// Fallibly transform the rejection payload by `f`. Used by the typed
+    /// facade to deserialize `ExecuteOutcome<Value>` into
+    /// `ExecuteOutcome<W::Rejection>`.
+    pub fn try_map<R2, E, F>(self, f: F) -> std::result::Result<ExecuteOutcome<R2>, E>
+    where
+        F: FnOnce(R) -> std::result::Result<R2, E>,
+    {
+        Ok(match self {
+            ExecuteOutcome::Accepted { events_appended } => {
+                ExecuteOutcome::Accepted { events_appended }
+            }
+            ExecuteOutcome::Rejected(r) => ExecuteOutcome::Rejected(f(r)?),
+            ExecuteOutcome::AlreadyCompleted => ExecuteOutcome::AlreadyCompleted,
+        })
+    }
 }
 
 /// App-facing workflow service.
@@ -49,23 +113,33 @@ where
     }
 
     /// Execute a typed workflow input.
-    pub async fn execute<W>(&self, input: &W::Input) -> Result<()>
+    ///
+    /// Goes through the TypeId-keyed typed dispatcher so the rejection
+    /// stays as `W::Rejection` end-to-end — no JSON round-trip.
+    /// `Err(...)` is reserved for framework failures (DB, unknown workflow
+    /// type).
+    pub async fn execute<W>(&self, input: &W::Input) -> Result<ExecuteOutcome<W::Rejection>>
     where
         W: Workflow + Send + Sync + 'static,
         W::State: Send,
-        W::Input: Serialize + DeserializeOwned + Send + Sync,
-        W::Effect: DeserializeOwned,
+        W::Input: Send + Sync,
+        W::Rejection: Send,
     {
-        let Some((_workflow_type, entry)) = self.registry.get(W::TYPE) else {
+        let Some(entry) = self.registry.get_typed::<W>() else {
             return Err(Error::UnknownWorkflowType(W::TYPE.to_string()));
         };
-
-        let input_json = serde_json::to_value(input)?;
-        entry.execute(input_json).await
+        entry.execute_typed(input).await
     }
 
     /// Execute an untyped workflow input by type string.
-    pub async fn execute_dynamic(&self, workflow_type: &str, payload: &Value) -> Result<()> {
+    ///
+    /// Rejection payloads are surfaced as [`serde_json::Value`] since the
+    /// caller doesn't know the workflow's `Rejection` type at compile time.
+    pub async fn execute_dynamic(
+        &self,
+        workflow_type: &str,
+        payload: &Value,
+    ) -> Result<ExecuteOutcome<Value>> {
         let Some((_workflow_type, entry)) = self.registry.get(workflow_type) else {
             return Err(Error::UnknownWorkflowType(workflow_type.to_string()));
         };

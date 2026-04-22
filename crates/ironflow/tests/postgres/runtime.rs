@@ -604,9 +604,9 @@ db_test!(timer_key_scoped_to_workflow_instance, |pool| {
     else {
         anyhow::bail!("expected Active");
     };
-    let fire_at = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
+    let delay = Duration::from_secs(3600);
     uow.schedule_timers([
-        Timer::at(fire_at, serde_json::json!({"type": "Timeout", "id": "a"}))
+        Timer::after(delay, serde_json::json!({"type": "Timeout", "id": "a"}))
             .with_key("shared-key"),
     ])
     .await?;
@@ -619,7 +619,7 @@ db_test!(timer_key_scoped_to_workflow_instance, |pool| {
         anyhow::bail!("expected Active");
     };
     uow.schedule_timers([
-        Timer::at(fire_at, serde_json::json!({"type": "Timeout", "id": "b"}))
+        Timer::after(delay, serde_json::json!({"type": "Timeout", "id": "b"}))
             .with_key("shared-key"),
     ])
     .await?;
@@ -918,6 +918,56 @@ db_test!(multiple_workers_no_double_processing, |pool| {
             wf_id, count
         );
     }
+
+    Ok(())
+});
+
+db_test!(shutdown_completes_when_worker_panics, |pool| {
+    // Panicking-handler scenario: when a worker task panics, shutdown
+    // must still complete. Previously `let _ = handle.await` silently
+    // swallowed the JoinError; now we log via tracing. This test locks
+    // in the behavioral guarantee that a panicked worker cannot hang
+    // shutdown. The panic message appears in tracing output (not
+    // verified here — asserting on tracing output is fragile; stderr
+    // inspection in CI would be the right home for that check).
+    struct PanickingHandler;
+
+    #[async_trait]
+    impl EffectHandler for PanickingHandler {
+        type Workflow = TestWorkflow;
+        type Error = anyhow::Error;
+
+        async fn handle(
+            &self,
+            _effect: &TestWorkflowEffect,
+            _ctx: &EffectContext,
+        ) -> Result<Option<TestWorkflowInput>, Self::Error> {
+            panic!("deliberate panic from PanickingHandler to test shutdown resilience");
+        }
+    }
+
+    let app = TestApp::builder(pool)
+        .register(PanickingHandler)
+        .build_and_run()
+        .await?;
+
+    // Submit something that will hit the handler and panic the worker.
+    app.service
+        .execute::<TestWorkflow>(&TestWorkflowInput::start(
+            "panicking-worker-1",
+            EffectMode::FireAndForget,
+        ))
+        .await?;
+
+    // Give the worker a moment to claim the effect and panic.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Shutdown must complete cleanly within a short timeout even though
+    // the effect worker task is dead.
+    let shutdown_timeout = Duration::from_secs(3);
+    tokio::time::timeout(shutdown_timeout, app.shutdown())
+        .await
+        .expect("shutdown should not hang when a worker task panicked")?;
 
     Ok(())
 });

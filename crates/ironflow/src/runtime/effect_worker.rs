@@ -119,6 +119,7 @@ where
             self.outbox
                 .record_permanent_failure(
                     effect.id,
+                    &self.worker_id,
                     &error_msg,
                     self.config.retry_policy.max_attempts,
                 )
@@ -147,23 +148,49 @@ where
                         "Routing effect result as new input"
                     );
                     // NOTE: This is not atomic with `mark_processed`; failures can lead to retries.
-                    if let Err(e) = self
+                    match self
                         .runtime
                         .service()
                         .execute_dynamic(effect.workflow.workflow_type(), &input_json)
                         .await
                     {
-                        // Routing failed - effect will be retried (handler must be idempotent)
-                        let error_msg = format!("Failed to route result: {}", e);
-                        warn!(effect_id = %effect.id, error = %error_msg, "Result routing failed");
-                        self.record_failure_with_backoff(&effect, &error_msg)
-                            .await?;
-                        return Ok(());
+                        Ok(outcome) => {
+                            // Accepted, Rejected, or AlreadyCompleted all count as
+                            // "the handler's routed input was dispatched." The
+                            // workflow chose what to do; the effect's job is done.
+                            match outcome {
+                                crate::ExecuteOutcome::Rejected(ref payload) => {
+                                    debug!(
+                                        effect_id = %effect.id,
+                                        rejection = ?payload,
+                                        "Routed input rejected by workflow"
+                                    );
+                                }
+                                crate::ExecuteOutcome::AlreadyCompleted => {
+                                    debug!(
+                                        effect_id = %effect.id,
+                                        "Routed input dropped — workflow already completed"
+                                    );
+                                }
+                                crate::ExecuteOutcome::Accepted { .. } => {}
+                            }
+                        }
+                        Err(e) => {
+                            // Framework-level routing error (DB, serde, unknown type)
+                            // — effect will be retried (handler must be idempotent).
+                            let error_msg = format!("Failed to route result: {}", e);
+                            warn!(effect_id = %effect.id, error = %error_msg, "Result routing failed");
+                            self.record_failure_with_backoff(&effect, &error_msg)
+                                .await?;
+                            return Ok(());
+                        }
                     }
                 }
 
                 // Mark as processed
-                self.outbox.mark_processed(effect.id).await?;
+                self.outbox
+                    .mark_processed(effect.id, &self.worker_id)
+                    .await?;
                 debug!(effect_id = %effect.id, "Effect processed successfully");
             }
             Err(effect_error) => {
@@ -181,6 +208,7 @@ where
                     self.outbox
                         .record_permanent_failure(
                             effect.id,
+                            &self.worker_id,
                             &error_msg,
                             self.config.retry_policy.max_attempts,
                         )
@@ -211,7 +239,9 @@ where
             .config
             .retry_policy
             .backoff_duration(effect.attempts + 1);
-        self.outbox.record_failure(effect.id, error, backoff).await
+        self.outbox
+            .record_failure(effect.id, &self.worker_id, error, backoff)
+            .await
     }
 }
 

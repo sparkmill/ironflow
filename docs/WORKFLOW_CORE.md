@@ -3,8 +3,6 @@
 This document explains the core execution model for Ironflow workflows.
 It is intentionally short and practical.
 
----
-
 ## Core Flow
 
 All inputs go through a single entrypoint (`WorkflowService`). The service
@@ -25,8 +23,6 @@ Input
 Effects and timers are delivered asynchronously by workers, but both are
 routed back into the same service entrypoint.
 
----
-
 ## Core Invariants
 
 - `Workflow::evolve` and `Workflow::decide` are pure and deterministic.
@@ -34,8 +30,6 @@ routed back into the same service entrypoint.
 - Inputs for the same workflow instance are serialized by a store lock.
 - Effects and timers are at-least-once.
 - Effects are unordered; if ordering matters, gate via state.
-
----
 
 ## Minimal Example
 
@@ -113,8 +107,6 @@ impl Workflow for CounterWorkflow {
     }
 }
 ```
-
----
 
 ## Common Pitfalls
 

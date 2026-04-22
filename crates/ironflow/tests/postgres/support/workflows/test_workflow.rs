@@ -7,6 +7,8 @@
 //! - Retry behavior (TransientFailure mode)
 //! - Dead letter queue (PermanentFailure mode)
 
+use std::borrow::Cow;
+
 use anyhow::bail;
 use async_trait::async_trait;
 use ironflow::{Decision, EffectContext, EffectHandler, HasWorkflowId, Workflow};
@@ -69,6 +71,9 @@ pub enum TestWorkflowInput {
     Failed { id: String, error: String },
     /// Stop the workflow (terminal state).
     Stop { id: String },
+    /// Force the decide function to return Outcome::Reject (for testing
+    /// rejection paths).
+    ForceReject { id: String, reason: String },
 }
 
 impl TestWorkflowInput {
@@ -100,6 +105,13 @@ impl TestWorkflowInput {
     pub fn stop(id: impl Into<String>) -> Self {
         Self::Stop { id: id.into() }
     }
+
+    pub fn force_reject(id: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::ForceReject {
+            id: id.into(),
+            reason: reason.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -126,6 +138,7 @@ impl Workflow for TestWorkflow {
     type Input = TestWorkflowInput;
     type Event = TestWorkflowEvent;
     type Effect = TestWorkflowEffect;
+    type Rejection = Cow<'static, str>;
 
     const TYPE: &'static str = "test_workflow";
 
@@ -157,13 +170,14 @@ impl Workflow for TestWorkflow {
         _now: OffsetDateTime,
         state: &Self::State,
         input: &Self::Input,
-    ) -> Decision<Self::Event, Self::Effect, Self::Input> {
+    ) -> Decision<Self::Event, Self::Effect, Self::Input, Self::Rejection> {
         match input {
-            TestWorkflowInput::Ping { .. } => Decision::event(TestWorkflowEvent::Pinged),
+            TestWorkflowInput::Ping { .. } => Decision::accept(TestWorkflowEvent::Pinged),
 
             TestWorkflowInput::Increment { with_effect, .. } => {
                 let new_value = state.counter + 1;
-                let decision = Decision::event(TestWorkflowEvent::Incremented { value: new_value });
+                let decision =
+                    Decision::accept(TestWorkflowEvent::Incremented { value: new_value });
                 if *with_effect {
                     decision.with_effect(TestWorkflowEffect::Notify {
                         message: format!("Counter is now {}", new_value),
@@ -180,23 +194,29 @@ impl Workflow for TestWorkflow {
                     EffectMode::TransientFailure => "transient_failure",
                     EffectMode::PermanentFailure => "permanent_failure",
                 };
-                Decision::event(TestWorkflowEvent::Started {
+                Decision::accept(TestWorkflowEvent::Started {
                     mode: mode_str.into(),
                 })
                 .with_effect(TestWorkflowEffect::Process { mode: mode.clone() })
             }
 
             TestWorkflowInput::Completed { result, .. } => {
-                Decision::event(TestWorkflowEvent::Completed {
+                Decision::accept(TestWorkflowEvent::Completed {
                     result: result.clone(),
                 })
             }
 
-            TestWorkflowInput::Failed { error, .. } => Decision::event(TestWorkflowEvent::Failed {
-                error: error.clone(),
-            }),
+            TestWorkflowInput::Failed { error, .. } => {
+                Decision::accept(TestWorkflowEvent::Failed {
+                    error: error.clone(),
+                })
+            }
 
-            TestWorkflowInput::Stop { .. } => Decision::event(TestWorkflowEvent::Stopped),
+            TestWorkflowInput::Stop { .. } => Decision::accept(TestWorkflowEvent::Stopped),
+
+            TestWorkflowInput::ForceReject { reason, .. } => {
+                Decision::reject(Cow::Owned(reason.clone()))
+            }
         }
     }
 
@@ -291,6 +311,7 @@ impl Workflow for EffectlessWorkflow {
     type Input = EffectlessInput;
     type Event = EffectlessEvent;
     type Effect = (); // No effects
+    type Rejection = Cow<'static, str>;
 
     const TYPE: &'static str = "effectless";
 
@@ -305,8 +326,8 @@ impl Workflow for EffectlessWorkflow {
         _now: OffsetDateTime,
         state: &Self::State,
         _input: &Self::Input,
-    ) -> Decision<Self::Event, Self::Effect, Self::Input> {
-        Decision::event(EffectlessEvent::Incremented {
+    ) -> Decision<Self::Event, Self::Effect, Self::Input, Self::Rejection> {
+        Decision::accept(EffectlessEvent::Incremented {
             value: state.value + 1,
         })
     }

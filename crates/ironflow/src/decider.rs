@@ -3,26 +3,26 @@
 use time::OffsetDateTime;
 
 use crate::error::Result;
-use crate::store::{BeginResult, InputObservation, Store, UnitOfWork};
-use crate::workflow::{HasWorkflowId, Workflow};
+use crate::service::ExecuteOutcome;
+use crate::store::{BeginResult, InputObservation, ObservationOutcome, Store, UnitOfWork};
+use crate::workflow::{Decision, HasWorkflowId, Workflow};
 
 /// Execute a workflow decision.
 ///
 /// This function:
-/// 1. Extracts the workflow ID from the input
-/// 2. Checks if workflow is already completed (silently returns if so)
-/// 3. Begins a unit of work (acquires lock, loads events)
-/// 4. Replays events to reconstruct current state
-/// 5. Calls `Workflow::decide` with the current state and input
-/// 6. Appends resulting events to the event store
-/// 7. Enqueues resulting effects to the outbox
-/// 8. Schedules any timers
-/// 9. Marks workflow as completed if terminal state reached
-/// 10. Commits the transaction
-///
-/// If the workflow is already completed, this function silently succeeds
-/// (idempotent behavior). If any step fails, the transaction is rolled back
-/// and no changes are persisted.
+/// 1. Extracts the workflow ID from the input.
+/// 2. Begins a unit of work (acquires lock, loads events).
+/// 3. If the workflow is already completed, records an observation (if
+///    enabled) and returns `AlreadyCompleted` — input is not dispatched.
+/// 4. Replays events to reconstruct current state.
+/// 5. Calls `Workflow::decide` with the current state and input.
+/// 6. On `Decision::Accept { .. }`: appends events, enqueues effects,
+///    schedules/cancels timers, marks terminal if applicable, records the
+///    accepted-input observation (if enabled), commits.
+/// 7. On `Decision::Reject(r)`: rolls back the unit of work (dropping any
+///    newly-inserted `workflow_instances` row so rejected bootstraps don't
+///    leave ghosts) and records a standalone rejected-input observation
+///    (if enabled). Returns `Rejected(r)`.
 ///
 /// # Concurrency
 ///
@@ -33,7 +33,7 @@ pub(crate) async fn execute<W, S>(
     store: &S,
     record_input_observations: bool,
     input: &W::Input,
-) -> Result<()>
+) -> Result<ExecuteOutcome<W::Rejection>>
 where
     W: Workflow,
     S: Store,
@@ -47,63 +47,105 @@ where
     {
         BeginResult::Active { events, uow, .. } => (events, uow),
         BeginResult::Completed => {
-            // Workflow already completed - silently succeed (idempotent)
-            return Ok(());
+            // Workflow already completed — record observation (if enabled)
+            // and signal to the caller that the input was not dispatched.
+            if record_input_observations {
+                let payload = serde_json::to_value(input)?;
+                let input_type = extract_input_type::<W>(&payload);
+                let observation = InputObservation {
+                    workflow_type: W::TYPE.to_string(),
+                    workflow_id: workflow_id.clone(),
+                    input_type,
+                    payload,
+                    outcome: ObservationOutcome::AlreadyCompleted,
+                };
+                store.record_observation(observation).await?;
+            }
+            return Ok(ExecuteOutcome::AlreadyCompleted);
         }
     };
-
-    if record_input_observations {
-        let payload = serde_json::to_value(input)?;
-        let input_type = payload
-            .get("type")
-            .and_then(|value| value.as_str())
-            .unwrap_or(std::any::type_name::<W::Input>())
-            .to_string();
-        let observation = InputObservation {
-            workflow_type: W::TYPE.to_string(),
-            workflow_id: workflow_id.clone(),
-            input_type,
-            payload,
-        };
-        uow.record_input_observation(observation).await?;
-    }
 
     let state = replay_state::<W>(W::TYPE, &workflow_id, event_payloads)?;
 
     let now = OffsetDateTime::now_utc();
     let decision = W::decide(now, &state, input);
-    let (events, effects, timers, cancel_timers) = decision.into_parts();
 
-    // Compute final state by applying new events
-    let final_state = events.iter().cloned().fold(state, W::evolve);
+    match decision {
+        Decision::Accept {
+            events,
+            effects,
+            timers,
+            cancel_timers,
+        } => {
+            if record_input_observations {
+                let payload = serde_json::to_value(input)?;
+                let input_type = extract_input_type::<W>(&payload);
+                let observation = InputObservation {
+                    workflow_type: W::TYPE.to_string(),
+                    workflow_id: workflow_id.clone(),
+                    input_type,
+                    payload,
+                    outcome: ObservationOutcome::Accepted,
+                };
+                uow.record_input_observation(observation).await?;
+            }
 
-    uow.append_events(events).await?;
-    uow.enqueue_effects(effects).await?;
+            // Compute final state by applying new events
+            let final_state = events.iter().cloned().fold(state, W::evolve);
+            let events_appended = events.len();
 
-    if !cancel_timers.is_empty() {
-        uow.cancel_timers(cancel_timers).await?;
+            uow.append_events(events).await?;
+            uow.enqueue_effects(effects).await?;
+
+            if !cancel_timers.is_empty() {
+                uow.cancel_timers(cancel_timers).await?;
+            }
+
+            // Convert timer inputs to JSON for storage. Delay and key
+            // pass through unchanged; fire_at is computed DB-side.
+            let json_timers: Vec<crate::Timer<serde_json::Value>> = timers
+                .into_iter()
+                .map(|t| {
+                    Ok(crate::Timer {
+                        delay: t.delay,
+                        input: serde_json::to_value(&t.input)?,
+                        key: t.key,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            uow.schedule_timers(json_timers).await?;
+
+            if W::is_terminal(&final_state) {
+                uow.mark_completed();
+            }
+
+            uow.commit().await?;
+            Ok(ExecuteOutcome::Accepted { events_appended })
+        }
+        Decision::Reject(rejection) => {
+            // Drop the unit of work without committing — this rolls back any
+            // newly-inserted workflow_instances row so a rejected bootstrap
+            // doesn't leave a ghost. Existing instances are untouched because
+            // we never modified them beyond the lock.
+            drop(uow);
+
+            if record_input_observations {
+                let payload = serde_json::to_value(input)?;
+                let input_type = extract_input_type::<W>(&payload);
+                let rejection_payload = serde_json::to_value(&rejection)?;
+                let observation = InputObservation {
+                    workflow_type: W::TYPE.to_string(),
+                    workflow_id: workflow_id.clone(),
+                    input_type,
+                    payload,
+                    outcome: ObservationOutcome::Rejected(rejection_payload),
+                };
+                store.record_observation(observation).await?;
+            }
+
+            Ok(ExecuteOutcome::Rejected(rejection))
+        }
     }
-
-    // Convert timers to JSON for storage
-    let json_timers: Vec<crate::Timer<serde_json::Value>> = timers
-        .into_iter()
-        .map(|t| {
-            Ok(crate::Timer {
-                fire_at: t.fire_at,
-                input: serde_json::to_value(&t.input)?,
-                key: t.key,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    uow.schedule_timers(json_timers).await?;
-
-    // Check if workflow reached terminal state
-    if W::is_terminal(&final_state) {
-        uow.mark_completed();
-    }
-
-    uow.commit().await?;
-    Ok(())
 }
 
 /// Replay events to reconstruct the current state.
@@ -122,4 +164,16 @@ fn replay_state<W: Workflow>(
     }
 
     Ok(state)
+}
+
+/// Best-effort input type name derivation for observations.
+///
+/// Prefers the `"type"` tag from the serialized input (common with
+/// `#[serde(tag = "type")]` enums); falls back to Rust's `type_name`.
+fn extract_input_type<W: Workflow>(payload: &serde_json::Value) -> String {
+    payload
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or(std::any::type_name::<W::Input>())
+        .to_string()
 }
