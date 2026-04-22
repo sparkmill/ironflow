@@ -2,8 +2,6 @@
 
 Practical guidance for common workflow patterns.
 
----
-
 ## Accept and Reject Inputs
 
 Principle:
@@ -38,8 +36,6 @@ Business outcomes are encoded as events, not return values. To inform users:
 - **Query events**: Look at the events emitted (e.g., `InputIgnored`, `CancelRejected`)
 - **Use projections**: Build read models for common queries
 
----
-
 ## Naming Events
 
 Events are the permanent audit trail. Name them as **facts that happened** so
@@ -68,8 +64,6 @@ Guidelines:
 - Use past tense (`Rejected`, `Ignored`, `Declined`)
 - Include `reason` or `code` in the payload
 - Be consistent across workflows
-
----
 
 ## Timer Keys and Rescheduling
 
@@ -104,8 +98,6 @@ Decision::event(Event::ItemPending { item_id })
 The timer key is stored with the timer entry. If you want it in the event
 history, include it in the event payload as well.
 
----
-
 ## Cancel Timers
 
 If a pending timer is no longer relevant, cancel it by key instead of
@@ -117,8 +109,6 @@ Decision::event(Event::PaymentReceived)
 ```
 
 For auditability, emit a `TimerCancelled { key }` event when cancelling.
-
----
 
 ## Idempotent Effects
 
@@ -151,8 +141,6 @@ async fn handle(
     }))
 }
 ```
-
----
 
 ## Unique Key Constraint (At-Most-One Active Workflow)
 
@@ -201,8 +189,6 @@ match service.execute::<PaymentWorkflow>(&input).await {
 - Only applies while the workflow is active (`completed_at IS NULL`).
 - Once the workflow completes, the key is released and a new workflow can start.
 - `is_terminal()` **must** be implemented; otherwise the key is held forever.
-
----
 
 ## Workflows Without Effects
 
