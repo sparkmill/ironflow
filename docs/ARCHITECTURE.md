@@ -3,8 +3,6 @@
 This document is the source of truth for the target system design. It covers
 system overview, workflow model, runtime, storage, and operational guidance.
 
----
-
 ## System Overview
 
 ```
@@ -51,8 +49,6 @@ Execution returns `Result<()>`:
 
 Business outcomes (acceptance, rejection) are encoded in the event stream,
 not in the return value. This keeps the API simple and idempotent.
-
----
 
 ## Workflow Model
 
@@ -127,8 +123,6 @@ instances can be skipped for future inputs.
 If enabled, the Workflow Service records input metadata alongside normal
 event storage. This enables later introspection without changing the core
 workflow model.
-
----
 
 ## Service and Runtime Architecture
 
@@ -286,8 +280,6 @@ This model supports:
 - Concurrent inputs targeting the same instance are serialized by the lock
 - Effect and timer workers coordinate with claim/lock semantics
 
----
-
 ## Storage Model (Postgres)
 
 We define a generic `Store` trait to keep the core model backend-agnostic,
@@ -330,8 +322,6 @@ but the primary implementation target is SQLx/Postgres in the first phase.
 - Per-instance order is sequence-based
 - Global order is not required for workflow correctness, but projections
   rely on it for replay ordering
-
----
 
 ## Effects and Timers
 
@@ -436,8 +426,6 @@ Key properties:
 3. Drain pending timers/effects before removing workflow types
 4. Consider a "maintenance mode" that pauses processing
 
----
-
 ## Introspection
 
 ### Manual StateMachineView (Design-Ready)
@@ -457,8 +445,6 @@ Implement `StateMachineView` to describe current status and transitions:
 Observation reduces drift between intended and actual behavior, but only
 shows paths that have been executed.
 
----
-
 ## Invariants
 
 - Workflow logic is pure and deterministic
@@ -466,8 +452,6 @@ shows paths that have been executed.
 - Effects and timers are at-least-once
 - Event ordering is guaranteed per workflow instance
 - Effect ordering is not guaranteed; enforce ordering through workflow state
-
----
 
 ## Future Improvements (Nice to Have)
 
@@ -584,8 +568,6 @@ Formal versioning system with explicit version numbers and upcast functions to
 migrate old events to current schema. Would enable non-additive schema changes.
 
 **Priority:** Low. Use `#[serde(default)]` and additive-only changes for now.
-
----
 
 ## Source of Truth
 

@@ -2,8 +2,6 @@
 
 Building read models from event streams using Ironflow's projection infrastructure.
 
----
-
 ## Overview
 
 Projections transform the append-only event log into queryable read models. They subscribe to all events via a global sequence number and maintain their own checkpoint for crash recovery.
@@ -93,8 +91,6 @@ In event-sourced systems, the event store is optimized for writes (append-only) 
        ▼
 5. Repeat on poll interval (default: 200ms)
 ```
-
----
 
 ## Core Components
 
@@ -186,8 +182,6 @@ worker.run(shutdown_rx).await?;
 // To shutdown gracefully:
 shutdown_tx.send(true)?;
 ```
-
----
 
 ## Implementation Example
 
@@ -290,8 +284,6 @@ impl Projection for OrderSummaryProjection {
 }
 ```
 
----
-
 ## Required Store Traits
 
 Projections require two store traits implemented by `PgStore`:
@@ -308,8 +300,6 @@ pub trait ProjectionStore: Send + Sync + Clone + 'static {
     async fn store_projection_position(&self, projection_name: &str, global_sequence: i64) -> Result<()>;
 }
 ```
-
----
 
 ## Database Schema
 
@@ -333,8 +323,6 @@ ORDER BY global_sequence
 LIMIT $2;  -- Batch size
 ```
 
----
-
 ## Guarantees
 
 | Guarantee                  | Status | Mechanism                                     |
@@ -352,15 +340,11 @@ LIMIT $2;  -- Batch size
 | **Real-time**       | Up to `poll_interval` latency                 | Reduce poll interval if needed            |
 | **Event filtering** | Receives ALL events from ALL workflows        | Filter by `workflow_type` in handler      |
 
----
-
 ## Worker Behavior (Summary)
 
 Projection workers poll at `poll_interval`, process events sequentially, and
 apply exponential backoff on failure (capped by `error_backoff_max`). Shutdown
 stops new polling; in-flight processing completes before exit.
-
----
 
 ## Best Practices
 
@@ -450,8 +434,6 @@ fn name(&self) -> &'static str {
 }
 ```
 
----
-
 ## Rebuilding Projections
 
 To rebuild a projection from scratch:
@@ -476,8 +458,6 @@ To rebuild a projection from scratch:
 
 The worker will replay all events from the beginning.
 
----
-
 ## Monitoring
 
 ### Key Metrics
@@ -500,8 +480,6 @@ SELECT
 FROM ironflow.projection_positions p;
 ```
 
----
-
 ## Limitations
 
 | Limitation              | Description                  | Workaround                           |
@@ -511,8 +489,6 @@ FROM ironflow.projection_positions p;
 | Per-event checkpointing | DB write per event           | Acceptable for most workloads        |
 | No dead letter queue    | Blocks on permanent failures | Fix handler and restart              |
 | No typed events         | Raw JSON payload             | Deserialize in handler               |
-
----
 
 ## Known Gaps
 
