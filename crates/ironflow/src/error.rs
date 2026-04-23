@@ -18,7 +18,8 @@ pub enum Error {
     /// Failed to deserialize an event during replay.
     ///
     /// Includes context about which event failed: workflow type, workflow ID,
-    /// and the event's sequence number (0-indexed position in the stream).
+    /// and the event's per-workflow sequence number (1-based, matching the
+    /// `sequence` column in the event store).
     #[error(
         "failed to deserialize event at sequence {sequence} for {workflow_type}:{workflow_id}: {source}"
     )]
@@ -27,8 +28,8 @@ pub enum Error {
         workflow_type: &'static str,
         /// The workflow instance ID.
         workflow_id: String,
-        /// The event's position in the stream (0-indexed).
-        sequence: usize,
+        /// The event's per-workflow sequence number (1-based).
+        sequence: i64,
         /// The underlying deserialization error.
         #[source]
         source: serde_json::Error,
@@ -71,7 +72,7 @@ impl Error {
     pub fn event_deserialization(
         workflow_type: &'static str,
         workflow_id: impl Into<String>,
-        sequence: usize,
+        sequence: i64,
         source: serde_json::Error,
     ) -> Self {
         Error::EventDeserialization {
