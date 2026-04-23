@@ -6,6 +6,16 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-23
+
+### Added
+
+- `Never` uninhabited type for `Workflow::Rejection`. Use as `type Rejection = Never;` when a workflow can never reject. Serializable alternative to `std::convert::Infallible`, which lacks serde impls and therefore doesn't satisfy the `Rejection` bound.
+
+### Fixed
+
+- `Workflow::Rejection` docstring no longer suggests `std::convert::Infallible`, which doesn't implement `Serialize`.
+
 ## [0.4.0] - 2026-04-22
 
 ### Breaking Changes
@@ -84,6 +94,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Foundation release of the Ironflow runtime crate and procedural macros.
 
-[Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/sparkmill/ironflow/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/sparkmill/ironflow/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sparkmill/ironflow/compare/v0.2.0...v0.3.0

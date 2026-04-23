@@ -97,7 +97,7 @@ pub use visualization::{
     FieldValue, StateDefinition, StateInfo, StateMachineDefinition, StateMachineView,
     TransitionDefinition, TransitionInfo,
 };
-pub use workflow::{Decision, HasWorkflowId, Workflow, WorkflowId, WorkflowRef};
+pub use workflow::{Decision, HasWorkflowId, Never, Workflow, WorkflowId, WorkflowRef};
 
 // Re-export derive macros
 pub use ironflow_macros::HasWorkflowId;
