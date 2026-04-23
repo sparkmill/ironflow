@@ -368,7 +368,7 @@ db_test!(fetch_workflow_events_returns_history, |pool| {
     Ok(())
 });
 
-db_test!(fetch_latest_state_returns_json, |pool| {
+db_test!(fetch_latest_state_returns_typed, |pool| {
     let store = PgStore::new(pool.clone());
     let service = build_service(store, false);
     let workflow_id = WorkflowId::new("state-1");
@@ -381,7 +381,26 @@ db_test!(fetch_latest_state_returns_json, |pool| {
         .await?;
 
     let state = service
-        .fetch_latest_state(TestWorkflow::TYPE, &workflow_id)
+        .fetch_latest_state::<TestWorkflow>(&workflow_id)
+        .await?;
+    assert_eq!(state.counter, 2);
+    Ok(())
+});
+
+db_test!(fetch_latest_state_dynamic_returns_json, |pool| {
+    let store = PgStore::new(pool.clone());
+    let service = build_service(store, false);
+    let workflow_id = WorkflowId::new("state-2");
+
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::increment("state-2"))
+        .await?;
+    service
+        .execute::<TestWorkflow>(&TestWorkflowInput::increment("state-2"))
+        .await?;
+
+    let state = service
+        .fetch_latest_state_dynamic(TestWorkflow::TYPE, &workflow_id)
         .await?;
 
     assert_eq!(state["counter"].as_i64(), Some(2));

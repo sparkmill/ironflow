@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::Workflow;
 use crate::error::{Error, Result};
-use crate::runtime::registry::{WorkflowEntry, WorkflowRegistry};
+use crate::runtime::registry::{DynamicEntry, WorkflowRegistry};
 use crate::store::{Store, StoredEvent, WorkflowInstanceSummary, WorkflowQueryStore};
 use crate::workflow::WorkflowId;
 
@@ -128,7 +128,7 @@ where
         let Some(entry) = self.registry.get_typed::<W>() else {
             return Err(Error::UnknownWorkflowType(W::TYPE.to_string()));
         };
-        entry.execute_typed(input).await
+        entry.execute(input).await
     }
 
     /// Execute an untyped workflow input by type string.
@@ -144,7 +144,7 @@ where
             return Err(Error::UnknownWorkflowType(workflow_type.to_string()));
         };
 
-        entry.execute(payload.clone()).await
+        entry.execute_dynamic(payload.clone()).await
     }
 
     /// Returns the number of registered workflows.
@@ -156,7 +156,7 @@ where
     pub(crate) fn get_entry(
         &self,
         workflow_type: &str,
-    ) -> Option<(&'static str, &dyn WorkflowEntry)> {
+    ) -> Option<(&'static str, &dyn DynamicEntry)> {
         self.registry.get(workflow_type)
     }
 
@@ -193,8 +193,26 @@ where
             .await
     }
 
-    /// Rebuild the latest state for a workflow and return it as JSON.
-    pub async fn fetch_latest_state(
+    /// Rebuild the latest state for a workflow, typed as `W::State`.
+    ///
+    /// Goes through the TypeId-keyed typed dispatcher so the state stays
+    /// as `W::State` end-to-end — no JSON round-trip.
+    pub async fn fetch_latest_state<W>(&self, workflow_id: &WorkflowId) -> Result<W::State>
+    where
+        W: Workflow + Send + Sync + 'static,
+        W::State: Send,
+    {
+        let Some(entry) = self.registry.get_typed::<W>() else {
+            return Err(Error::UnknownWorkflowType(W::TYPE.to_string()));
+        };
+        entry.replay_latest_state(workflow_id).await
+    }
+
+    /// Rebuild the latest state for a workflow by type string and return it as JSON.
+    ///
+    /// Use this when the workflow type isn't known at compile time (e.g. HTTP
+    /// dashboards). Typed callers should prefer [`Self::fetch_latest_state`].
+    pub async fn fetch_latest_state_dynamic(
         &self,
         workflow_type: &str,
         workflow_id: &WorkflowId,
@@ -203,6 +221,6 @@ where
             return Err(Error::UnknownWorkflowType(workflow_type.to_string()));
         };
 
-        entry.replay_latest_state(workflow_id).await
+        entry.replay_latest_state_dynamic(workflow_id).await
     }
 }
