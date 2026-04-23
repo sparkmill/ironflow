@@ -71,16 +71,22 @@ fn log_worker_termination(
 
 /// Typed dispatch for a specific workflow `W`.
 ///
-/// Parallel to [`WorkflowEntry`] but preserves `W` at the trait level, so
-/// `execute_typed` can take `&W::Input` and return `ExecuteOutcome<W::Rejection>`
+/// Parallel to [`DynamicEntry`] but preserves `W` at the trait level, so
+/// `execute` takes `&W::Input` and returns `ExecuteOutcome<W::Rejection>`
 /// without going through JSON. The typed registry stores
-/// `Arc<dyn TypedDispatch<W>>` keyed by `TypeId::of::<W>()`, letting
+/// `Arc<dyn TypedEntry<W>>` keyed by `TypeId::of::<W>()`, letting
 /// [`WorkflowService::execute`](crate::WorkflowService::execute) bypass the
 /// dyn-erased path that requires serde round-trip.
 #[async_trait]
-pub(crate) trait TypedDispatch<W: Workflow>: Send + Sync + 'static {
+pub(crate) trait TypedEntry<W: Workflow>: Send + Sync + 'static {
     /// Execute a typed input and return the typed outcome.
-    async fn execute_typed(&self, input: &W::Input) -> crate::Result<ExecuteOutcome<W::Rejection>>;
+    async fn execute(&self, input: &W::Input) -> crate::Result<ExecuteOutcome<W::Rejection>>;
+
+    /// Rebuild the latest state for this workflow and return it typed.
+    async fn replay_latest_state(
+        &self,
+        workflow_id: &crate::workflow::WorkflowId,
+    ) -> crate::Result<W::State>;
 }
 
 /// Type-erased workflow entry for dynamic dispatch.
@@ -88,7 +94,7 @@ pub(crate) trait TypedDispatch<W: Workflow>: Send + Sync + 'static {
 /// This trait allows the registry to store different workflow types
 /// in a single HashMap while preserving type-safe execution.
 #[async_trait]
-pub(crate) trait WorkflowEntry: Send + Sync {
+pub(crate) trait DynamicEntry: Send + Sync {
     /// Execute a decision for this workflow type.
     ///
     /// Deserializes the input JSON, routes to the typed workflow, and
@@ -96,7 +102,10 @@ pub(crate) trait WorkflowEntry: Send + Sync {
     /// AlreadyCompleted). Rejection payloads are serialized to JSON
     /// because this method is behind a `dyn` boundary that can't mention
     /// `W::Rejection`.
-    async fn execute(&self, input_json: Value) -> crate::Result<crate::ExecuteOutcome<Value>>;
+    async fn execute_dynamic(
+        &self,
+        input_json: Value,
+    ) -> crate::Result<crate::ExecuteOutcome<Value>>;
 
     /// Handle an effect for this workflow type.
     ///
@@ -110,16 +119,17 @@ pub(crate) trait WorkflowEntry: Send + Sync {
     ) -> Result<Option<Value>, String>;
 
     /// Rebuild the latest state for this workflow from stored events.
-    async fn replay_latest_state(
+    async fn replay_latest_state_dynamic(
         &self,
         workflow_id: &crate::workflow::WorkflowId,
     ) -> crate::Result<Value>;
 }
 
-/// Typed workflow entry that captures concrete types at registration.
-///
-/// Wraps a store and `EffectHandler` for a specific workflow type.
-struct TypedWorkflowEntry<W, H, S>
+/// Concrete registry entry. Captures `W`, `H`, and `S` at registration
+/// and implements both [`TypedEntry<W>`] and [`DynamicEntry`] — the typed
+/// view is used by `execute<W>` / `fetch_latest_state<W>`, the dynamic
+/// view by `execute_dynamic` / `fetch_latest_state_dynamic`.
+struct WorkflowEntry<W, H, S>
 where
     W: Workflow,
     H: EffectHandler<Workflow = W>,
@@ -132,7 +142,7 @@ where
 }
 
 #[async_trait]
-impl<W, H, S> WorkflowEntry for TypedWorkflowEntry<W, H, S>
+impl<W, H, S> DynamicEntry for WorkflowEntry<W, H, S>
 where
     W: Workflow + Send + Sync + 'static,
     W::State: Send + Serialize,
@@ -141,11 +151,12 @@ where
     H: EffectHandler<Workflow = W>,
     S: Store + WorkflowQueryStore,
 {
-    async fn execute(&self, input_json: Value) -> crate::Result<crate::ExecuteOutcome<Value>> {
+    async fn execute_dynamic(
+        &self,
+        input_json: Value,
+    ) -> crate::Result<crate::ExecuteOutcome<Value>> {
         let input: W::Input = serde_json::from_value(input_json)?;
-        let outcome =
-            crate::decider::execute::<W, _>(&self.store, self.record_input_observations, &input)
-                .await?;
+        let outcome = self.execute(&input).await?;
 
         // Erase rejection to JSON for the dyn boundary. Typed callers
         // re-materialize W::Rejection via `ExecuteOutcome::try_map`.
@@ -177,10 +188,33 @@ where
         }
     }
 
-    async fn replay_latest_state(
+    async fn replay_latest_state_dynamic(
         &self,
         workflow_id: &crate::workflow::WorkflowId,
     ) -> crate::Result<Value> {
+        let state = self.replay_latest_state(workflow_id).await?;
+        Ok(serde_json::to_value(state)?)
+    }
+}
+
+#[async_trait]
+impl<W, H, S> TypedEntry<W> for WorkflowEntry<W, H, S>
+where
+    W: Workflow + Send + Sync + 'static,
+    W::State: Send,
+    W::Input: Send + Sync,
+    W::Rejection: Send,
+    H: EffectHandler<Workflow = W>,
+    S: Store + WorkflowQueryStore,
+{
+    async fn execute(&self, input: &W::Input) -> crate::Result<ExecuteOutcome<W::Rejection>> {
+        crate::decider::execute::<W, _>(&self.store, self.record_input_observations, input).await
+    }
+
+    async fn replay_latest_state(
+        &self,
+        workflow_id: &crate::workflow::WorkflowId,
+    ) -> crate::Result<W::State> {
         let events = self
             .store
             .fetch_workflow_events(W::TYPE, workflow_id)
@@ -194,22 +228,7 @@ where
             state = W::evolve(state, typed);
         }
 
-        Ok(serde_json::to_value(state)?)
-    }
-}
-
-#[async_trait]
-impl<W, H, S> TypedDispatch<W> for TypedWorkflowEntry<W, H, S>
-where
-    W: Workflow + Send + Sync + 'static,
-    W::State: Send,
-    W::Input: Send + Sync,
-    W::Rejection: Send,
-    H: EffectHandler<Workflow = W>,
-    S: Store,
-{
-    async fn execute_typed(&self, input: &W::Input) -> crate::Result<ExecuteOutcome<W::Rejection>> {
-        crate::decider::execute::<W, _>(&self.store, self.record_input_observations, input).await
+        Ok(state)
     }
 }
 
@@ -219,11 +238,11 @@ where
 /// - `entries` (string-keyed) — used by workers claiming timers/effects
 ///   from the DB and by the public `execute_dynamic` API.
 /// - `typed_entries` (TypeId-keyed) — used by typed `execute<W>` to
-///   bypass the JSON round-trip. Holds `Arc<dyn TypedDispatch<W>>`
+///   bypass the JSON round-trip. Holds `Arc<dyn TypedEntry<W>>`
 ///   values boxed as `Box<dyn Any + Send + Sync>`; downcasting is safe
 ///   because the TypeId key guarantees `W` matches.
 pub(crate) struct WorkflowRegistry {
-    entries: HashMap<&'static str, Arc<dyn WorkflowEntry>>,
+    entries: HashMap<&'static str, Arc<dyn DynamicEntry>>,
     typed_entries: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
@@ -238,7 +257,7 @@ impl WorkflowRegistry {
 
     /// Register a workflow with its handler. Populates both the
     /// string-keyed dynamic map and the TypeId-keyed typed map from the
-    /// same shared `Arc<TypedWorkflowEntry<W, H, S>>`.
+    /// same shared `Arc<WorkflowEntry<W, H, S>>`.
     fn register<W, H, S>(&mut self, store: S, record_input_observations: bool, handler: H)
     where
         W: Workflow + Send + Sync + 'static,
@@ -249,7 +268,7 @@ impl WorkflowRegistry {
         H: EffectHandler<Workflow = W>,
         S: Store + WorkflowQueryStore,
     {
-        let entry = Arc::new(TypedWorkflowEntry {
+        let entry = Arc::new(WorkflowEntry {
             store,
             record_input_observations,
             handler,
@@ -257,12 +276,12 @@ impl WorkflowRegistry {
         });
 
         // Dynamic (string-keyed) view — used by workers + execute_dynamic.
-        let dyn_entry: Arc<dyn WorkflowEntry> = entry.clone();
+        let dyn_entry: Arc<dyn DynamicEntry> = entry.clone();
         self.entries.insert(W::TYPE, dyn_entry);
 
         // Typed (TypeId-keyed) view — used by execute<W>. Boxed through
         // Any because the map value type can't mention W.
-        let typed_entry: Arc<dyn TypedDispatch<W>> = entry;
+        let typed_entry: Arc<dyn TypedEntry<W>> = entry;
         self.typed_entries
             .insert(TypeId::of::<W>(), Box::new(typed_entry));
     }
@@ -271,7 +290,7 @@ impl WorkflowRegistry {
     ///
     /// Returns the static workflow type key and the entry if found.
     /// The static key can be used to create `EffectContext` instances.
-    pub(crate) fn get(&self, workflow_type: &str) -> Option<(&'static str, &dyn WorkflowEntry)> {
+    pub(crate) fn get(&self, workflow_type: &str) -> Option<(&'static str, &dyn DynamicEntry)> {
         self.entries
             .get_key_value(workflow_type)
             .map(|(k, v)| (*k, v.as_ref()))
@@ -280,13 +299,13 @@ impl WorkflowRegistry {
     /// Look up the typed dispatcher for `W`. Returns `None` if `W` wasn't
     /// registered. The downcast is infallible when the TypeId matches,
     /// which is the only way a value ends up at this key.
-    pub(crate) fn get_typed<W>(&self) -> Option<Arc<dyn TypedDispatch<W>>>
+    pub(crate) fn get_typed<W>(&self) -> Option<Arc<dyn TypedEntry<W>>>
     where
         W: Workflow + 'static,
     {
         self.typed_entries
             .get(&TypeId::of::<W>())
-            .and_then(|any| any.downcast_ref::<Arc<dyn TypedDispatch<W>>>())
+            .and_then(|any| any.downcast_ref::<Arc<dyn TypedEntry<W>>>())
             .cloned()
     }
 

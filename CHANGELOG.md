@@ -6,7 +6,11 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-04-23
+## [0.5.0] - 2026-04-23
+
+### Breaking Changes
+
+- `WorkflowService::fetch_latest_state` is now generic over `W: Workflow` and returns `Result<W::State>` instead of `Result<Value>`. The previous string-keyed JSON variant is still available as `fetch_latest_state_dynamic(workflow_type, workflow_id)`, mirroring the `execute<W>` / `execute_dynamic` pair.
 
 ### Added
 
@@ -15,6 +19,11 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - `Workflow::Rejection` docstring no longer suggests `std::convert::Infallible`, which doesn't implement `Serialize`.
+
+### Migration
+
+- Typed callers: `service.fetch_latest_state(W::TYPE, &id)` → `service.fetch_latest_state::<W>(&id)` (drops the JSON round-trip).
+- Dynamic / HTTP callers who want `Value` back: rename to `fetch_latest_state_dynamic(W::TYPE, &id)`.
 
 ## [0.4.0] - 2026-04-22
 
@@ -94,7 +103,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Foundation release of the Ironflow runtime crate and procedural macros.
 
-[Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.4.1...HEAD
-[0.4.1]: https://github.com/sparkmill/ironflow/compare/v0.4.0...v0.4.1
+[Unreleased]: https://github.com/sparkmill/ironflow/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/sparkmill/ironflow/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sparkmill/ironflow/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sparkmill/ironflow/compare/v0.2.0...v0.3.0

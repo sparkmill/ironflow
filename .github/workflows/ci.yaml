@@ -67,8 +67,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      DATABASE_URL: "postgres://postgres:postgres@localhost:5432/ironflow"
-      TEST_ADMIN_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/postgres"
+      DATABASE_URL: "postgres://postgres:postgres@localhost:55432/ironflow"
+      TEST_ADMIN_DATABASE_URL: "postgres://postgres:postgres@localhost:55432/postgres"
     steps:
       - uses: actions/checkout@v6
 
