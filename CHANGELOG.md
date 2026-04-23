@@ -11,6 +11,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Breaking Changes
 
 - `WorkflowService::fetch_latest_state` is now generic over `W: Workflow` and returns `Result<W::State>` instead of `Result<Value>`. The previous string-keyed JSON variant is still available as `fetch_latest_state_dynamic(workflow_type, workflow_id)`, mirroring the `execute<W>` / `execute_dynamic` pair.
+- `Error::EventDeserialization::sequence` widened from `usize` to `i64` to match the DB sequence type. The constructor `Error::event_deserialization` takes `i64` accordingly.
 
 ### Added
 
@@ -19,6 +20,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - `Workflow::Rejection` docstring no longer suggests `std::convert::Infallible`, which doesn't implement `Serialize`.
+- Event-deserialization errors during replay now report the per-workflow sequence number from the event store (1-based), matching the `sequence` column. Previously reported the 0-based iteration index, which mismatched the DB value by 1 and made debugging harder.
+- Crate-level rustdoc example in `lib.rs` no longer references the unexported `Decider` type or the renamed `Decision::event` / 3-param `Decision<E, F, I>`; now uses `WorkflowRuntime::builder(...).build_service()` with `type Rejection = Never;` and `Decision::accept(...)`.
 
 ### Migration
 

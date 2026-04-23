@@ -25,7 +25,10 @@
 //! # Example
 //!
 //! ```ignore
-//! use ironflow::{Decision, Decider, HasWorkflowId, PgStore, Workflow, WorkflowId};
+//! use ironflow::{
+//!     Decision, HasWorkflowId, Never, PgStore, Workflow, WorkflowId,
+//!     WorkflowRuntime, WorkflowServiceConfig,
+//! };
 //!
 //! struct CounterWorkflow;
 //!
@@ -34,6 +37,7 @@
 //!     type Input = CounterInput;
 //!     type Event = CounterEvent;
 //!     type Effect = ();
+//!     type Rejection = Never;
 //!
 //!     const TYPE: &'static str = "counter";
 //!
@@ -43,17 +47,23 @@
 //!         }
 //!     }
 //!
-//!     fn decide(_now: time::OffsetDateTime, _state: &Self::State, _input: &Self::Input)
-//!         -> Decision<Self::Event, Self::Effect, Self::Input>
-//!     {
-//!         Decision::event(CounterEvent::Incremented)
+//!     fn decide(
+//!         _now: time::OffsetDateTime,
+//!         _state: &Self::State,
+//!         _input: &Self::Input,
+//!     ) -> Decision<Self::Event, Self::Effect, Self::Input, Self::Rejection> {
+//!         Decision::accept(CounterEvent::Incremented)
 //!     }
 //! }
 //!
-//! // Execute a workflow decision
+//! // Build the service and execute a workflow input.
 //! let store = PgStore::new(pool);
-//! let decider: Decider<CounterWorkflow, _> = Decider::new(store);
-//! decider.execute(&CounterInput::Increment { id: "counter-1".into() }).await?;
+//! let service = WorkflowRuntime::builder(store, WorkflowServiceConfig::default())
+//!     .register_without_effects::<CounterWorkflow>()
+//!     .build_service()?;
+//! service
+//!     .execute::<CounterWorkflow>(&CounterInput::Increment { id: "counter-1".into() })
+//!     .await?;
 //! ```
 //!
 //! # Feature Flags

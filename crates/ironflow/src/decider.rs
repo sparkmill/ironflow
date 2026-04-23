@@ -149,6 +149,11 @@ where
 }
 
 /// Replay events to reconstruct the current state.
+///
+/// `events` is the full stream from the store in sequence order, starting at
+/// per-workflow sequence 1. The Nth event (0-indexed) has sequence `N + 1`,
+/// which is what we report in error context — matches the `sequence` column
+/// in the event store, unlike the iteration index.
 fn replay_state<W: Workflow>(
     workflow_type: &'static str,
     workflow_id: &crate::WorkflowId,
@@ -156,7 +161,8 @@ fn replay_state<W: Workflow>(
 ) -> Result<W::State> {
     let mut state = W::State::default();
 
-    for (sequence, payload) in events.into_iter().enumerate() {
+    for (index, payload) in events.into_iter().enumerate() {
+        let sequence = (index as i64) + 1;
         let event: W::Event = serde_json::from_value(payload).map_err(|e| {
             crate::Error::event_deserialization(workflow_type, workflow_id.as_str(), sequence, e)
         })?;
