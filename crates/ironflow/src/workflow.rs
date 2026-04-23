@@ -80,7 +80,7 @@ pub trait Workflow {
     /// Common choices:
     /// - A domain enum for structured rejections: `OrderRejection::AlreadyPaid`.
     /// - `Cow<'static, str>` for simple string reasons.
-    /// - `std::convert::Infallible` if the workflow can never reject.
+    /// - [`Never`] if the workflow can never reject.
     type Rejection: Serialize + Send + std::fmt::Debug;
 
     /// Workflow type identifier. Combined with [`HasWorkflowId::workflow_id`]
@@ -141,6 +141,10 @@ pub trait Workflow {
         None
     }
 }
+
+/// Uninhabited [`Workflow::Rejection`] type for workflows that can never reject.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Never {}
 
 /// Extracts the workflow instance ID (business key) from an input.
 ///
