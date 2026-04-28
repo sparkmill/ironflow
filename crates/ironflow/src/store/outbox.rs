@@ -107,14 +107,22 @@ pub trait OutboxStore: Send + Sync + Clone + 'static {
     ///
     /// Effects where `attempts >= max_attempts` are excluded (dead letters).
     ///
+    /// Only effects whose `workflow_type` is in `registered_types` are
+    /// claimed. This keeps a worker that hasn't registered a handler for
+    /// some type from claiming (and immediately dead-lettering) those rows
+    /// — important during rolling deploys where pods disagree on the
+    /// registry. An empty `registered_types` claims nothing.
+    ///
     /// # Arguments
     ///
     /// * `worker_id` - Identifier for this worker (for debugging)
+    /// * `registered_types` - Workflow types the worker has handlers for
     /// * `lock_duration` - How long to hold the lock
     /// * `max_attempts` - Maximum attempts before an effect becomes dead-lettered
     fn claim_effect(
         &self,
         worker_id: &str,
+        registered_types: &[String],
         lock_duration: Duration,
         max_attempts: u32,
     ) -> impl Future<Output = crate::Result<Option<OutboxEffect>>> + Send;
@@ -178,14 +186,20 @@ pub trait OutboxStore: Send + Sync + Clone + 'static {
     /// Timer effects contain an embedded `input` field that should be
     /// routed directly to the workflow's decider.
     ///
+    /// Only timers whose `workflow_type` is in `registered_types` are
+    /// claimed; see [`claim_effect`](Self::claim_effect) for rationale.
+    /// An empty `registered_types` claims nothing.
+    ///
     /// # Arguments
     ///
     /// * `worker_id` - Identifier for this worker (for debugging)
+    /// * `registered_types` - Workflow types the worker has handlers for
     /// * `lock_duration` - How long to hold the lock
     /// * `max_attempts` - Maximum attempts before a timer becomes dead-lettered
     fn claim_timer(
         &self,
         worker_id: &str,
+        registered_types: &[String],
         lock_duration: Duration,
         max_attempts: u32,
     ) -> impl Future<Output = crate::Result<Option<OutboxEffect>>> + Send;

@@ -46,6 +46,13 @@ pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub const TEST_LOCK_DURATION: Duration = Duration::from_secs(30);
 
+/// Workflow types used by store-level tests when calling `claim_effect` /
+/// `claim_timer` directly. Production callers source this from the
+/// runtime's registry; tests bypass the runtime so we hard-code the set.
+pub fn test_registered_types() -> Vec<String> {
+    vec!["test".to_string()]
+}
+
 /// Tracks maximum concurrent executions for parallelism tests.
 #[derive(Default)]
 pub struct ConcurrencyTracker {

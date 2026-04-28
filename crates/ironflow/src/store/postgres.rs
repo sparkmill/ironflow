@@ -534,12 +534,18 @@ impl OutboxStore for PgStore {
     async fn claim_effect(
         &self,
         worker_id: &str,
+        registered_types: &[String],
         lock_duration: Duration,
         max_attempts: u32,
     ) -> Result<Option<OutboxEffect>> {
         // Atomically claim an immediate effect using FOR UPDATE SKIP LOCKED.
         // This prevents multiple workers from claiming the same effect.
         // Excludes dead-lettered effects (attempts >= max_attempts).
+        //
+        // `workflow_type = ANY($4)` filters to types this worker has
+        // handlers for. During rolling deploys, an old pod whose registry
+        // is missing a newly-introduced type will simply not see the row;
+        // the new pod claims it. An empty array trivially matches no rows.
         //
         // Lock timestamp is computed in DB to avoid clock skew between app and DB servers.
         let lock_duration_secs = lock_duration.as_secs_f64();
@@ -553,6 +559,7 @@ impl OutboxStore for PgStore {
                 WHERE processed_at IS NULL
                   AND attempts < $3
                   AND (locked_until IS NULL OR locked_until < now())
+                  AND workflow_type = ANY($4)
                 ORDER BY created_at
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
@@ -568,6 +575,7 @@ impl OutboxStore for PgStore {
             lock_duration_secs,
             worker_id,
             max_attempts as i32,
+            registered_types,
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -671,11 +679,15 @@ impl OutboxStore for PgStore {
     async fn claim_timer(
         &self,
         worker_id: &str,
+        registered_types: &[String],
         lock_duration: Duration,
         max_attempts: u32,
     ) -> Result<Option<OutboxEffect>> {
         // Atomically claim a due timer from the dedicated timers table.
         // Excludes dead-lettered timers (attempts >= max_attempts).
+        //
+        // `workflow_type = ANY($4)` filters to types this worker has
+        // handlers for; see `claim_effect` for rationale.
         //
         // Lock timestamp is computed in DB to avoid clock skew between app and DB servers.
         let lock_duration_secs = lock_duration.as_secs_f64();
@@ -690,6 +702,7 @@ impl OutboxStore for PgStore {
                   AND processed_at IS NULL
                   AND attempts < $3
                   AND (locked_until IS NULL OR locked_until < now())
+                  AND workflow_type = ANY($4)
                 ORDER BY fire_at
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
@@ -699,6 +712,7 @@ impl OutboxStore for PgStore {
             lock_duration_secs,
             worker_id,
             max_attempts as i32,
+            registered_types,
         )
         .fetch_optional(&self.pool)
         .await?;

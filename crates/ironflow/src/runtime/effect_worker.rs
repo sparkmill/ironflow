@@ -35,6 +35,10 @@ where
     outbox: O,
     config: RuntimeConfig,
     worker_id: String,
+    // Snapshot of registered workflow types, computed once at construction.
+    // Passed to `claim_effect` so the DB skips rows for types this worker
+    // can't handle — see `OutboxStore::claim_effect`.
+    registered_types: Arc<Vec<String>>,
 }
 
 impl<S, O> EffectWorker<S, O>
@@ -48,12 +52,14 @@ where
         outbox: O,
         config: RuntimeConfig,
         worker_id: String,
+        registered_types: Arc<Vec<String>>,
     ) -> Self {
         Self {
             runtime,
             outbox,
             config,
             worker_id,
+            registered_types,
         }
     }
 
@@ -91,6 +97,7 @@ where
             .outbox
             .claim_effect(
                 &self.worker_id,
+                &self.registered_types,
                 self.config.effect_lock_duration,
                 self.config.retry_policy.max_attempts,
             )

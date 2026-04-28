@@ -6,6 +6,35 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-28
+
+### Breaking Changes
+
+- `OutboxStore::claim_effect` and `OutboxStore::claim_timer` gained a `registered_types: &[String]` parameter. The claim queries now filter by `workflow_type = ANY($registered_types)`, so a worker only claims rows for types it has handlers for. An empty slice claims nothing. The runtime sources this from the registry automatically; only callers that implement `OutboxStore` themselves or call these methods directly need to update.
+
+### Changed
+
+- During rolling deploys, an old pod whose registry doesn't know a newly-introduced workflow type now leaves those rows untouched (instead of claiming them and dead-lettering them as "Unknown workflow type"). The new pod, which does know the type, claims them. The dead-letter-on-unknown-type code path in the effect worker remains as defense-in-depth but is no longer reached in normal operation.
+- Runtime now logs a warning at startup if no workflows are registered — workers would otherwise look silently idle.
+
+### Migration
+
+- Existing dead-lettered effects/timers from previous deploys whose `last_error` matches `'Unknown workflow type%'` will not auto-recover — the new claim filter only affects future claims. To recycle them after upgrading, run once per environment:
+
+  ```sql
+  UPDATE ironflow.outbox
+  SET attempts = 0, last_error = NULL, locked_until = NULL, locked_by = NULL
+  WHERE processed_at IS NULL
+    AND last_error LIKE 'Unknown workflow type%';
+
+  UPDATE ironflow.timers
+  SET attempts = 0, last_error = NULL, locked_until = NULL, locked_by = NULL
+  WHERE processed_at IS NULL
+    AND last_error LIKE 'Unknown workflow type%';
+  ```
+
+- Operationally: rows for workflow types that are _retired_ (no pod will ever register them again) now sit pending forever instead of dead-lettering. Consider adding a "stuck pending rows" alert (e.g. `processed_at IS NULL AND created_at < now() - interval '1 hour'`) to surface them.
+
 ## [0.5.0] - 2026-04-23
 
 ### Breaking Changes
