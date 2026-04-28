@@ -152,6 +152,11 @@ where
         self.registry.len()
     }
 
+    /// Returns the workflow types registered with this service.
+    pub(crate) fn registered_types(&self) -> Vec<String> {
+        self.registry.registered_types()
+    }
+
     /// Look up a workflow entry by type.
     pub(crate) fn get_entry(
         &self,

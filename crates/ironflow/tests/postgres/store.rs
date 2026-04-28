@@ -20,6 +20,7 @@ use crate::support::db::{
 };
 use crate::support::helpers::{
     DEFAULT_TEST_TIMEOUT, TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS, assert_event_types,
+    test_registered_types,
 };
 use crate::support::workflows::test_workflow::{
     TestWorkflow, TestWorkflowHandler, TestWorkflowInput,
@@ -380,7 +381,12 @@ db_test!(mark_timer_processed_skips_rescheduled_timer, |pool| {
     .await?;
 
     let claimed = store
-        .claim_timer("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_timer(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?
         .expect("due timer should be claimable");
     let claimed_id = claimed.id;
@@ -504,7 +510,12 @@ db_test!(effect_permanent_failure_dead_letters_immediately, |pool| {
     assert_eq!(dead_letters.len(), 1);
 
     let claimed = store
-        .claim_effect("worker-1", DEFAULT_TEST_TIMEOUT, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-1",
+            &test_registered_types(),
+            DEFAULT_TEST_TIMEOUT,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
     assert!(claimed.is_none());
     Ok(())
@@ -728,7 +739,12 @@ db_test!(claim_effect_returns_pending_effect, |pool| {
     uow.commit().await?;
 
     let effect = store
-        .claim_effect("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
 
     assert!(effect.is_some());
@@ -744,7 +760,12 @@ db_test!(claim_effect_returns_none_when_empty, |pool| {
     let store = PgStore::new(pool.clone());
 
     let effect = store
-        .claim_effect("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
 
     assert!(effect.is_none());
@@ -762,13 +783,23 @@ db_test!(claim_effect_respects_lock_duration, |pool| {
     uow.commit().await?;
 
     let effect1 = store
-        .claim_effect("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
     assert!(effect1.is_some());
 
     // Second worker cannot claim - already locked
     let effect2 = store
-        .claim_effect("worker-2", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-2",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
     assert!(effect2.is_none());
 
@@ -786,14 +817,24 @@ db_test!(mark_processed_removes_effect_from_queue, |pool| {
     uow.commit().await?;
 
     let effect = store
-        .claim_effect("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?
         .unwrap();
 
     store.mark_processed(effect.id, "worker-1").await?;
 
     let next = store
-        .claim_effect("worker-2", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-2",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
     assert!(next.is_none());
 
@@ -821,7 +862,12 @@ db_test!(
         uow.commit().await?;
 
         let effect = store
-            .claim_effect("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+            .claim_effect(
+                "worker-1",
+                &test_registered_types(),
+                TEST_LOCK_DURATION,
+                TEST_MAX_ATTEMPTS,
+            )
             .await?
             .unwrap();
 
@@ -845,7 +891,12 @@ db_test!(
 
         // Not claimable yet due to backoff
         let next = store
-            .claim_effect("worker-2", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+            .claim_effect(
+                "worker-2",
+                &test_registered_types(),
+                TEST_LOCK_DURATION,
+                TEST_MAX_ATTEMPTS,
+            )
             .await?;
         assert!(next.is_none());
 
@@ -871,7 +922,12 @@ db_test!(record_failure_skips_stale_claim, |pool| {
     uow.commit().await?;
 
     let effect = store
-        .claim_effect("worker-A", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-A",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?
         .unwrap();
 
@@ -977,7 +1033,12 @@ db_test!(retry_dead_letter_resets_attempts, |pool| {
     assert_eq!(attempts, 0);
 
     let effect = store
-        .claim_effect("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_effect(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
     assert!(effect.is_some());
 
@@ -1031,7 +1092,12 @@ db_test!(claim_timer_returns_due_timer, |pool| {
     .await?;
 
     let timer = store
-        .claim_timer("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_timer(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
 
     assert!(timer.is_some());
@@ -1054,7 +1120,12 @@ db_test!(claim_timer_returns_none_for_future_timer, |pool| {
     .await?;
 
     let timer = store
-        .claim_timer("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_timer(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
 
     assert!(timer.is_none());
@@ -1073,14 +1144,24 @@ db_test!(mark_timer_processed_removes_from_queue, |pool| {
     .await?;
 
     let timer = store
-        .claim_timer("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_timer(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?
         .unwrap();
 
     store.mark_timer_processed(timer.id, "worker-1").await?;
 
     let next = store
-        .claim_timer("worker-2", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_timer(
+            "worker-2",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?;
     assert!(next.is_none());
 
@@ -1107,7 +1188,12 @@ db_test!(record_timer_failure_increments_attempts, |pool| {
     .await?;
 
     let timer = store
-        .claim_timer("worker-1", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_timer(
+            "worker-1",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?
         .unwrap();
 
@@ -1151,7 +1237,12 @@ db_test!(record_timer_failure_skips_stale_claim, |pool| {
     .await?;
 
     let timer = store
-        .claim_timer("worker-A", TEST_LOCK_DURATION, TEST_MAX_ATTEMPTS)
+        .claim_timer(
+            "worker-A",
+            &test_registered_types(),
+            TEST_LOCK_DURATION,
+            TEST_MAX_ATTEMPTS,
+        )
         .await?
         .unwrap();
 

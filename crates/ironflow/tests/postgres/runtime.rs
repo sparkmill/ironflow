@@ -306,17 +306,18 @@ db_test!(parallel_effect_processing_with_multiple_workers, |pool| {
 // Coverage gap tests
 // =============================================================================
 
-db_test!(unknown_workflow_type_dead_letters_immediately, |pool| {
-    // This test documents the runtime's policy for unknown workflow types:
-    // - Unknown type = permanent configuration error (not transient)
-    // - Retrying won't help (no handler will ever exist for this type)
-    // - Dead-letter immediately to avoid infinite retry loops
+db_test!(unknown_workflow_type_is_not_claimed, |pool| {
+    // The claim query filters by registered workflow types, so a row whose
+    // type isn't in this worker's registry is invisible — neither processed
+    // nor dead-lettered. This is the rolling-deploy property: an old pod
+    // missing a handler for a newly-introduced type leaves those rows for
+    // the new pod instead of dead-lettering them mid-rollout.
     //
-    // If this policy needs to change (e.g., to support dynamic handler registration),
-    // this test should be updated to reflect the new expected behavior.
+    // (The dead-letter-on-unknown-type code path in EffectWorker still
+    // exists as defense-in-depth, but in normal operation the claim filter
+    // prevents reaching it.)
 
-    // Insert an effect for a workflow type that won't be registered
-    db::insert_outbox_effect(
+    let effect_id = db::insert_outbox_effect(
         pool,
         "nonexistent_workflow",
         "unknown-type-1",
@@ -329,18 +330,49 @@ db_test!(unknown_workflow_type_dead_letters_immediately, |pool| {
     )
     .await?;
 
-    // Start runtime with only TestWorkflowHandler - doesn't handle "nonexistent_workflow"
+    // Start runtime with only TestWorkflowHandler — doesn't handle "nonexistent_workflow"
     let app = TestApp::builder(pool)
         .register(TestWorkflowHandler::new())
         .build_and_run()
         .await?;
 
-    // Effect should be dead-lettered immediately (unknown type = permanent failure)
-    app.wait_for_dead_letter(
-        DeadLetterQuery::new().workflow_type("nonexistent_workflow"),
-        DEFAULT_TEST_TIMEOUT,
+    // Wait long enough for several poll cycles. The row must NOT be touched.
+    tokio::time::sleep(DEFAULT_POLL_INTERVAL * 5).await;
+
+    let row = sqlx::query!(
+        "SELECT processed_at, attempts, locked_by, last_error \
+         FROM ironflow.outbox WHERE id = $1",
+        effect_id,
     )
+    .fetch_one(pool)
     .await?;
+
+    assert!(
+        row.processed_at.is_none(),
+        "unknown-type row should not have been processed"
+    );
+    assert_eq!(
+        row.attempts, 0,
+        "unknown-type row should not have failed attempts"
+    );
+    assert!(
+        row.locked_by.is_none(),
+        "unknown-type row should not have been claimed (locked_by = {:?})",
+        row.locked_by
+    );
+    assert!(
+        row.last_error.is_none(),
+        "unknown-type row should not carry an error"
+    );
+
+    // And it should not appear in the dead-letter queue.
+    let dead_letters = app
+        .fetch_dead_letters(DeadLetterQuery::new().workflow_type("nonexistent_workflow"))
+        .await?;
+    assert!(
+        dead_letters.is_empty(),
+        "unknown-type row must not be dead-lettered"
+    );
 
     Ok(())
 });

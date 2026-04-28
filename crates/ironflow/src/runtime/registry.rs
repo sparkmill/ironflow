@@ -314,6 +314,15 @@ impl WorkflowRegistry {
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
+
+    /// Returns the workflow type strings registered with this worker.
+    ///
+    /// Used by the outbox/timer claim queries to skip rows for types this
+    /// worker can't handle (avoiding spurious dead-letters during rolling
+    /// deploys where pods disagree on the registry).
+    pub(crate) fn registered_types(&self) -> Vec<String> {
+        self.entries.keys().map(|k| (*k).to_string()).collect()
+    }
 }
 
 /// Builder for constructing a [`WorkflowRuntime`].
@@ -582,6 +591,21 @@ where
         );
 
         let runtime = Arc::new(self);
+        // Snapshot the registered workflow types once and share via Arc
+        // across all workers. Registry is immutable after build, so this
+        // never changes during a worker's lifetime; cloning the Arc is
+        // cheap per-worker.
+        let registered_types = Arc::new(runtime.service.registered_types());
+        if registered_types.is_empty() {
+            // An empty registry means `claim_effect` / `claim_timer` will
+            // match no rows — workers run but never do anything. Almost
+            // always a misconfiguration (forgot `.register(...)`), so warn
+            // loudly instead of looking silently idle.
+            tracing::warn!(
+                worker_id = %runtime.worker_id,
+                "Runtime started with no registered workflows — workers will not claim any effects or timers"
+            );
+        }
         // Each entry is a supervisor task that owns the worker task,
         // awaits its termination, and logs panics/cancellations in
         // real time (not at shutdown). This matters for long-running
@@ -602,6 +626,7 @@ where
                 runtime.store.clone(),
                 runtime.config.clone(),
                 worker_name.clone(),
+                Arc::clone(&registered_types),
             );
 
             let effect_shutdown_rx = shutdown_rx.clone();
@@ -627,6 +652,7 @@ where
                 runtime.store.clone(),
                 runtime.config.clone(),
                 worker_name.clone(),
+                Arc::clone(&registered_types),
             );
 
             let timer_shutdown_rx = shutdown_rx.clone();

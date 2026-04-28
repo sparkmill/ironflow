@@ -40,6 +40,8 @@ where
     outbox: O,
     config: RuntimeConfig,
     worker_id: String,
+    // See `EffectWorker::registered_types`.
+    registered_types: Arc<Vec<String>>,
 }
 
 impl<S, O> TimerWorker<S, O>
@@ -53,12 +55,14 @@ where
         outbox: O,
         config: RuntimeConfig,
         worker_id: String,
+        registered_types: Arc<Vec<String>>,
     ) -> Self {
         Self {
             runtime,
             outbox,
             config,
             worker_id,
+            registered_types,
         }
     }
 
@@ -96,6 +100,7 @@ where
             .outbox
             .claim_timer(
                 &self.worker_id,
+                &self.registered_types,
                 self.config.timer_lock_duration,
                 self.config.retry_policy.max_attempts,
             )
