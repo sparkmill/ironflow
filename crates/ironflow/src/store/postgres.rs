@@ -560,7 +560,7 @@ impl OutboxStore for PgStore {
                   AND attempts < $3
                   AND (locked_until IS NULL OR locked_until < now())
                   AND workflow_type = ANY($4)
-                ORDER BY created_at
+                ORDER BY created_at, id
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
@@ -703,7 +703,7 @@ impl OutboxStore for PgStore {
                   AND attempts < $3
                   AND (locked_until IS NULL OR locked_until < now())
                   AND workflow_type = ANY($4)
-                ORDER BY fire_at
+                ORDER BY fire_at, id
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
