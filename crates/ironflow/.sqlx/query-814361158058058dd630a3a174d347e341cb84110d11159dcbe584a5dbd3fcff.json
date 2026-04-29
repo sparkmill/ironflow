@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE ironflow.timers\n            SET locked_until = now() + ($1 * interval '1 second'),\n                locked_by = $2\n            WHERE id = (\n                SELECT id FROM ironflow.timers\n                WHERE fire_at <= now()\n                  AND processed_at IS NULL\n                  AND attempts < $3\n                  AND (locked_until IS NULL OR locked_until < now())\n                  AND workflow_type = ANY($4)\n                ORDER BY fire_at\n                LIMIT 1\n                FOR UPDATE SKIP LOCKED\n            )\n            RETURNING id, workflow_type, workflow_id, input, attempts, created_at\n            ",
+  "query": "\n            UPDATE ironflow.timers\n            SET locked_until = now() + ($1 * interval '1 second'),\n                locked_by = $2\n            WHERE id = (\n                SELECT id FROM ironflow.timers\n                WHERE fire_at <= now()\n                  AND processed_at IS NULL\n                  AND attempts < $3\n                  AND (locked_until IS NULL OR locked_until < now())\n                  AND workflow_type = ANY($4)\n                ORDER BY fire_at, id\n                LIMIT 1\n                FOR UPDATE SKIP LOCKED\n            )\n            RETURNING id, workflow_type, workflow_id, input, attempts, created_at\n            ",
   "describe": {
     "columns": [
       {
@@ -51,5 +51,5 @@
       false
     ]
   },
-  "hash": "3a85e4832d9ed0fe94d905ad0ae474ae23c8802097c94fbb7e03bf6437474d5c"
+  "hash": "814361158058058dd630a3a174d347e341cb84110d11159dcbe584a5dbd3fcff"
 }
