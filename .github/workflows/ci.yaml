@@ -13,7 +13,7 @@ jobs:
       sql: ${{ steps.filter.outputs.sql }}
       toml: ${{ steps.filter.outputs.toml }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check changed paths
         id: filter
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install pgFormatter
         run: |
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -70,7 +70,7 @@ jobs:
       DATABASE_URL: "postgres://postgres:postgres@localhost:55432/ironflow"
       TEST_ADMIN_DATABASE_URL: "postgres://postgres:postgres@localhost:55432/postgres"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Spin up docker services
         run: ./scripts/spin_up_docker_services.sh
